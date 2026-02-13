@@ -17,9 +17,42 @@ export default async function handler(req, res) {
   try {
     const { topic, goal, platforms, tone, includes, length, userName, userEmail } = req.body;
 
-    // Log usage (for your tracking)
+    // Create timestamp
     const timestamp = new Date().toISOString();
-    console.log('Post Generated:', { userName, userEmail, topic, timestamp });
+    const readableTime = new Date().toLocaleString('en-US', { 
+      timeZone: 'America/New_York',
+      month: '2-digit',
+      day: '2-digit', 
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+
+    // Log to Google Sheets (if configured)
+    if (process.env.GOOGLE_SHEETS_WEBHOOK) {
+      try {
+        await fetch(process.env.GOOGLE_SHEETS_WEBHOOK, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userName,
+            userEmail,
+            topic,
+            goal,
+            platforms: platforms.join(', '),
+            tone,
+            length,
+            timestamp: readableTime
+          })
+        });
+      } catch (sheetError) {
+        console.error('Google Sheets logging failed:', sheetError);
+        // Don't fail the request if logging fails
+      }
+    }
+
+    // Log to console (always)
+    console.log('Post Generated:', { userName, userEmail, topic, goal, timestamp: readableTime });
 
     // Build the prompt for Claude
     const includesList = includes || [];
@@ -73,13 +106,14 @@ Format the post exactly as it should appear on social media, with proper line br
         userName,
         userEmail,
         topic,
-        timestamp
+        timestamp: readableTime
       }
     });
 
   } catch (error) {
     console.error('Error:', error);
     return res.status(500).json({ 
+      success: false,
       error: 'Failed to generate post',
       message: error.message 
     });
