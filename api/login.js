@@ -81,7 +81,8 @@ export default async function handler(req, res) {
         email: sheetResult.user.email,
         brokerage: sheetResult.user.brokerage
       },
-      tempPassword: sheetResult.tempPassword || false
+      tempPassword: sheetResult.tempPassword || false,
+      isAdmin: sheetResult.isAdmin || false
     });
 
   } catch (error) {
