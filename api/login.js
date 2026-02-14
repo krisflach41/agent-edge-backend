@@ -80,7 +80,8 @@ export default async function handler(req, res) {
         name: sheetResult.user.name,
         email: sheetResult.user.email,
         brokerage: sheetResult.user.brokerage
-      }
+      },
+      tempPassword: sheetResult.tempPassword || false
     });
 
   } catch (error) {
