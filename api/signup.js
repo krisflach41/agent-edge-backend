@@ -110,7 +110,9 @@ export default async function handler(req, res) {
         name: fullName,
         email: email,
         brokerage: brokerage
-      }
+      },
+      role: 'trial',
+      trialStart: new Date().toISOString()
     });
 
   } catch (error) {
