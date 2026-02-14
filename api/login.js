@@ -82,7 +82,9 @@ export default async function handler(req, res) {
         brokerage: sheetResult.user.brokerage
       },
       tempPassword: sheetResult.tempPassword || false,
-      isAdmin: sheetResult.isAdmin || false
+      isAdmin: sheetResult.isAdmin || false,
+      role: sheetResult.role || 'partner',
+      trialStart: sheetResult.trialStart || ''
     });
 
   } catch (error) {
