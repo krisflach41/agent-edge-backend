@@ -101,6 +101,11 @@ export default async function handler(req, res) {
         kids: c.kids || null,
         employer: c.employer || null,
         job_title: c.jobTitle || null,
+        website: c.website || null,
+        facebook: c.facebook || null,
+        instagram: c.instagram || null,
+        linkedin: c.linkedin || null,
+        tiktok: c.tiktok || null,
         updated_at: new Date().toISOString()
       };
 
