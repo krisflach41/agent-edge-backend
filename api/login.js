@@ -11,6 +11,7 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', 'https://kristyflach.com');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
 
   if (req.method === 'OPTIONS') {
     res.status(200).end();
@@ -22,39 +23,39 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { username, password } = req.body;
+    const { email, password } = req.body;
 
-    if (!username || !password) {
-      return res.status(400).json({ success: false, message: 'Username and password required' });
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: 'Email and password required' });
     }
 
-    const cleanUsername = username.toLowerCase().trim();
+    const cleanEmail = email.toLowerCase().trim();
     const hashedPassword = simpleHash(password);
 
-    // Query Supabase users table
+    // Query by email (email IS the username now)
     const { data: user, error } = await supabase
       .from('users')
       .select('*')
-      .eq('username', cleanUsername)
+      .eq('email', cleanEmail)
       .eq('password', hashedPassword)
       .single();
 
     if (error || !user) {
-      return res.status(401).json({ success: false, message: 'Invalid username or password' });
+      return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
 
     // Update last login timestamp
     await supabase
       .from('users')
       .update({ last_login: new Date().toISOString() })
-      .eq('username', cleanUsername);
+      .eq('email', cleanEmail);
 
     // Track login in activity
     try {
       await supabase
         .from('crm_activity')
         .insert([{
-          crm_id: user.email,
+          crm_id: cleanEmail,
           type: 'login',
           subject: 'Portal Login',
           body: 'User logged into portal',
@@ -68,9 +69,9 @@ export default async function handler(req, res) {
     return res.status(200).json({
       success: true,
       user: {
-        username: user.username,
+        username: cleanEmail,
         name: user.full_name,
-        email: user.email,
+        email: cleanEmail,
         brokerage: user.brokerage
       },
       tempPassword: user.temp_password || false,
