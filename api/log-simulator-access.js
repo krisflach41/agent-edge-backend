@@ -1,3 +1,11 @@
+import { createClient } from '@supabase/supabase-js';
+
+// Initialize Supabase
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
+
 export default async function handler(req, res) {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', 'https://kristyflach.com');
@@ -18,36 +26,24 @@ export default async function handler(req, res) {
 
     const realIP = req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || 'Unknown';
 
-    const readableTime = new Date().toLocaleString('en-US', { 
-      timeZone: 'America/New_York',
-      month: '2-digit',
-      day: '2-digit', 
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-
-    if (process.env.GOOGLE_SHEETS_WEBHOOK_SIMULATOR) {
-      try {
-        await fetch(process.env.GOOGLE_SHEETS_WEBHOOK_SIMULATOR, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: 'ACCESS',
-            name,
-            email,
-            acknowledged: 'YES',
-            ipAddress: realIP,
-            userAgent,
-            timestamp: readableTime
-          })
-        });
-      } catch (sheetError) {
-        console.error('Google Sheets logging failed:', sheetError);
-      }
+    // Log to Supabase credit_simulator_logs table
+    try {
+      await supabase
+        .from('credit_simulator_logs')
+        .insert([{
+          log_type: 'ACCESS',
+          user_name: name,
+          user_email: email,
+          action: 'Acknowledged Warnings',
+          details: 'User accepted credit simulator warnings',
+          ip_address: realIP,
+          created_at: new Date().toISOString()
+        }]);
+    } catch (logError) {
+      console.error('Supabase logging failed:', logError);
     }
 
-    console.log('Simulator Access Logged:', { name, email, ip: realIP, timestamp: readableTime });
+    console.log('Simulator Access Logged:', { name, email, ip: realIP });
 
     return res.status(200).json({
       success: true,
