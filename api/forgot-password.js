@@ -1,3 +1,11 @@
+import { createClient } from '@supabase/supabase-js';
+
+// Initialize Supabase
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
+
 export default async function handler(req, res) {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', 'https://kristyflach.com');
@@ -20,31 +28,41 @@ export default async function handler(req, res) {
       return res.status(400).json({ success: false, message: 'Email is required' });
     }
 
+    const cleanEmail = email.toLowerCase().trim();
+
+    // Look up user by email in Supabase
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', cleanEmail)
+      .single();
+
+    // Don't reveal whether email exists or not (security)
+    if (error || !user) {
+      return res.status(200).json({ 
+        success: true, 
+        message: 'If an account with that email exists, a password reset has been sent.' 
+      });
+    }
+
     // Generate a random temporary password
     const tempPassword = 'Temp' + Math.random().toString(36).substring(2, 8).toUpperCase() + Math.floor(Math.random() * 99);
 
     // Hash the temp password for storage
     const hashedTemp = simpleHash(tempPassword);
 
-    // Send to Auth Apps Script to look up email and update password
-    if (!process.env.AUTH_SHEETS_WEBHOOK) {
-      return res.status(500).json({ success: false, message: 'Auth not configured' });
-    }
-
-    const sheetResponse = await fetch(process.env.AUTH_SHEETS_WEBHOOK, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'resetPassword',
-        email: email.toLowerCase().trim(),
-        newPassword: hashedTemp
+    // Update user with temp password in Supabase
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ 
+        password: hashedTemp,
+        temp_password: true,
+        updated_at: new Date().toISOString()
       })
-    });
+      .eq('email', cleanEmail);
 
-    const sheetResult = await sheetResponse.json();
-
-    if (!sheetResult.success) {
-      // Don't reveal whether email exists or not (security)
+    if (updateError) {
+      console.error('Failed to update password:', updateError);
       return res.status(200).json({ 
         success: true, 
         message: 'If an account with that email exists, a password reset has been sent.' 
@@ -62,7 +80,7 @@ export default async function handler(req, res) {
           },
           body: JSON.stringify({
             from: 'Agent Edge <noreply@kristyflach.com>',
-            to: [email],
+            to: [cleanEmail],
             subject: 'Your Agent Edge Password Reset',
             html: `
               <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 40px 30px; background: #f8f9fa; border-radius: 12px;">
@@ -72,7 +90,7 @@ export default async function handler(req, res) {
                 </div>
                 
                 <div style="background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
-                  <p style="color: #333; font-size: 15px; line-height: 1.6; margin-top: 0;">Hi ${sheetResult.userName || 'there'},</p>
+                  <p style="color: #333; font-size: 15px; line-height: 1.6; margin-top: 0;">Hi ${user.full_name || 'there'},</p>
                   
                   <p style="color: #333; font-size: 15px; line-height: 1.6;">A password reset was requested for your account. Here is your temporary password:</p>
                   
@@ -99,32 +117,19 @@ export default async function handler(req, res) {
       }
     }
 
-    // Track password reset in Activity
-    if (process.env.TRACKING_SHEETS_WEBHOOK) {
-      try {
-        const readableTime = new Date().toLocaleString('en-US', {
-          timeZone: 'America/New_York',
-          month: '2-digit',
-          day: '2-digit',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        });
-
-        await fetch(process.env.TRACKING_SHEETS_WEBHOOK, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            timestamp: readableTime,
-            userName: sheetResult.userName || 'Unknown',
-            userEmail: email,
-            collection: 'Portal',
-            tool: 'Authentication',
-            action: 'Password Reset',
-            details: 'Temporary password issued'
-          })
-        });
-      } catch (e) {}
+    // Track password reset in Supabase activity
+    try {
+      await supabase
+        .from('crm_activity')
+        .insert([{
+          crm_id: cleanEmail,
+          type: 'password_reset',
+          subject: 'Password Reset',
+          body: 'Temporary password issued',
+          date: new Date().toISOString()
+        }]);
+    } catch (e) {
+      console.error('Activity tracking failed:', e);
     }
 
     // Always return the same message (don't reveal if email exists)
