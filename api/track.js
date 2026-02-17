@@ -1,3 +1,11 @@
+import { createClient } from '@supabase/supabase-js';
+
+// Initialize Supabase
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
+
 export default async function handler(req, res) {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', 'https://kristyflach.com');
@@ -16,37 +24,22 @@ export default async function handler(req, res) {
   try {
     const { userName, userEmail, collection, tool, action, details } = req.body;
 
-    const readableTime = new Date().toLocaleString('en-US', {
-      timeZone: 'America/New_York',
-      month: '2-digit',
-      day: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-
-    // Log to Google Sheets via webhook
-    if (process.env.TRACKING_SHEETS_WEBHOOK) {
-      try {
-        await fetch(process.env.TRACKING_SHEETS_WEBHOOK, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            timestamp: readableTime,
-            userName: userName || '',
-            userEmail: userEmail || '',
-            collection: collection || '',
-            tool: tool || '',
-            action: action || '',
-            details: details || ''
-          })
-        });
-      } catch (sheetError) {
-        console.error('Tracking sheet logging failed:', sheetError);
-      }
+    // Log to Supabase activity table
+    try {
+      await supabase
+        .from('crm_activity')
+        .insert([{
+          crm_id: userEmail || 'unknown',
+          type: (collection || tool || 'activity').toLowerCase().replace(/\s+/g, '_'),
+          subject: action || 'Activity',
+          body: details ? `${collection || ''} ${tool || ''}: ${details}`.trim() : `${collection || ''} ${tool || ''}`.trim(),
+          date: new Date().toISOString()
+        }]);
+    } catch (activityError) {
+      console.error('Supabase activity logging failed:', activityError);
     }
 
-    console.log('Activity Tracked:', { userName, action, collection, tool, timestamp: readableTime });
+    console.log('Activity Tracked:', { userName, action, collection, tool });
 
     return res.status(200).json({ success: true });
 
