@@ -1,3 +1,11 @@
+import { createClient } from '@supabase/supabase-js';
+
+// Initialize Supabase
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
+
 export default async function handler(req, res) {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', 'https://kristyflach.com');
@@ -20,17 +28,23 @@ export default async function handler(req, res) {
       return res.status(400).json({ success: false, message: 'Missing orderId or status' });
     }
 
-    // Send to Google Sheets via webhook to update status
-    if (process.env.TRACKING_SHEETS_WEBHOOK) {
-      await fetch(process.env.TRACKING_SHEETS_WEBHOOK, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'updateOrderStatus',
-          orderId: orderId,
-          status: status
-        })
-      });
+    // Update order status in Supabase
+    const { data, error } = await supabase
+      .from('orders')
+      .update({ 
+        status: status.toLowerCase(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('order_id', orderId)
+      .select();
+
+    if (error) {
+      console.error('Supabase update error:', error);
+      return res.status(500).json({ success: false, message: 'Failed to update order status' });
+    }
+
+    if (!data || data.length === 0) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
     return res.status(200).json({ success: true, message: 'Status updated' });
