@@ -1,3 +1,11 @@
+import { createClient } from '@supabase/supabase-js';
+
+// Initialize Supabase
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
+
 export default async function handler(req, res) {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', 'https://kristyflach.com');
@@ -17,38 +25,23 @@ export default async function handler(req, res) {
     const { topic, goal, platforms, tone, includes, length, userName, userEmail } = req.body;
 
     const timestamp = new Date().toISOString();
-    const readableTime = new Date().toLocaleString('en-US', { 
-      timeZone: 'America/New_York',
-      month: '2-digit',
-      day: '2-digit', 
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
 
-    // Log to Google Sheets (if configured)
-    if (process.env.GOOGLE_SHEETS_WEBHOOK) {
-      try {
-        await fetch(process.env.GOOGLE_SHEETS_WEBHOOK, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userName,
-            userEmail,
-            topic,
-            goal,
-            platforms: platforms.join(', '),
-            tone,
-            length,
-            timestamp: readableTime
-          })
-        });
-      } catch (sheetError) {
-        console.error('Google Sheets logging failed:', sheetError);
-      }
+    // Log to Supabase activity table
+    try {
+      await supabase
+        .from('crm_activity')
+        .insert([{
+          crm_id: userEmail,
+          type: 'ai_post_generated',
+          subject: 'AI Post Generator',
+          body: `Topic: ${topic} | Goal: ${goal} | Platforms: ${platforms.join(', ')} | Tone: ${tone} | Length: ${length}`,
+          date: timestamp
+        }]);
+    } catch (activityError) {
+      console.error('Activity logging failed:', activityError);
     }
 
-    console.log('Post Generated:', { userName, userEmail, topic, goal, timestamp: readableTime });
+    console.log('Post Generated:', { userName, userEmail, topic, goal, timestamp });
 
     const includesList = includes || [];
     const prompt = `You are a professional real estate social media content creator. Create a ${tone} social media post about: ${topic}
@@ -99,7 +92,7 @@ Format the post exactly as it should appear on social media, with proper line br
         userName,
         userEmail,
         topic,
-        timestamp: readableTime
+        timestamp
       }
     });
 
