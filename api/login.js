@@ -44,6 +44,11 @@ export default async function handler(req, res) {
       return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
 
+    // Block cancelled users
+    if (user.role === 'cancelled') {
+      return res.status(403).json({ success: false, message: 'This account has been deactivated. Contact Kristy at kflach@prmg.net to reactivate.' });
+    }
+
     // Update last login timestamp
     await supabase
       .from('users')
