@@ -1,3 +1,11 @@
+import { createClient } from '@supabase/supabase-js';
+
+// Initialize Supabase
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY // Use service key for backend operations
+);
+
 export default async function handler(req, res) {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', 'https://kristyflach.com');
@@ -25,22 +33,26 @@ export default async function handler(req, res) {
     }
 
     const hashedPassword = simpleHash(newPassword);
+    const cleanUsername = username.toLowerCase().trim();
 
-    // Update password in Google Sheet
-    const sheetResponse = await fetch(process.env.AUTH_SHEETS_WEBHOOK, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'changePassword',
-        username: username.toLowerCase().trim(),
-        newPassword: hashedPassword
+    // Update password in Supabase users table
+    const { data, error } = await supabase
+      .from('users')
+      .update({ 
+        password: hashedPassword,
+        temp_password: false,
+        updated_at: new Date().toISOString()
       })
-    });
+      .eq('username', cleanUsername)
+      .select();
 
-    const sheetResult = await sheetResponse.json();
-
-    if (!sheetResult.success) {
+    if (error) {
+      console.error('Supabase update error:', error);
       return res.status(400).json({ success: false, message: 'Failed to update password' });
+    }
+
+    if (!data || data.length === 0) {
+      return res.status(404).json({ success: false, message: 'User not found' });
     }
 
     return res.status(200).json({ success: true, message: 'Password updated successfully' });
