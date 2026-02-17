@@ -1,3 +1,11 @@
+import { createClient } from '@supabase/supabase-js';
+
+// Initialize Supabase
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
+
 export default async function handler(req, res) {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', 'https://kristyflach.com');
@@ -21,6 +29,7 @@ export default async function handler(req, res) {
     }
 
     const cleanUsername = username.toLowerCase().trim();
+    const cleanEmail = email.toLowerCase().trim();
 
     // Validate username format
     if (!/^[a-z0-9._]+$/.test(cleanUsername)) {
@@ -34,64 +43,95 @@ export default async function handler(req, res) {
     // Hash the password
     const hashedPassword = simpleHash(password);
 
-    const readableTime = new Date().toLocaleString('en-US', {
-      timeZone: 'America/New_York',
-      month: '2-digit',
-      day: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    // Check for duplicate username or email
+    const { data: existing } = await supabase
+      .from('users')
+      .select('username, email')
+      .or(`username.eq.${cleanUsername},email.eq.${cleanEmail}`);
 
-    // Store user in Google Sheet via webhook
-    // The Apps Script will check for duplicate usernames and store the user
-    if (process.env.AUTH_SHEETS_WEBHOOK) {
-      const sheetResponse = await fetch(process.env.AUTH_SHEETS_WEBHOOK, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'signup',
-          username: cleanUsername,
-          password: hashedPassword,
-          fullName: fullName,
-          email: email,
-          brokerage: brokerage,
-          timestamp: readableTime
-        })
-      });
-
-      const sheetResult = await sheetResponse.json();
-
-      if (!sheetResult.success) {
-        return res.status(409).json({ success: false, message: sheetResult.message || 'Username already taken' });
+    if (existing && existing.length > 0) {
+      const isDuplicateUsername = existing.some(u => u.username === cleanUsername);
+      const isDuplicateEmail = existing.some(u => u.email === cleanEmail);
+      
+      if (isDuplicateUsername) {
+        return res.status(409).json({ success: false, message: 'Username already taken' });
+      }
+      if (isDuplicateEmail) {
+        return res.status(409).json({ success: false, message: 'Email already registered' });
       }
     }
 
-    // Track signup in Activity tab
-    if (process.env.TRACKING_SHEETS_WEBHOOK) {
-      try {
-        await fetch(process.env.TRACKING_SHEETS_WEBHOOK, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            timestamp: readableTime,
-            userName: fullName,
-            userEmail: email,
-            collection: 'Portal',
-            tool: 'Authentication',
-            action: 'New Signup',
-            details: 'Brokerage: ' + brokerage
-          })
-        });
-      } catch (e) {}
+    // Create user in Supabase
+    const { data: newUser, error: insertError } = await supabase
+      .from('users')
+      .insert([{
+        username: cleanUsername,
+        password: hashedPassword,
+        email: cleanEmail,
+        full_name: fullName,
+        brokerage: brokerage,
+        role: 'trial',
+        is_admin: false,
+        temp_password: false,
+        trial_start_date: new Date().toISOString(),
+        joined_date: new Date().toISOString()
+      }])
+      .select();
+
+    if (insertError) {
+      console.error('User insert error:', insertError);
+      return res.status(500).json({ success: false, message: 'Failed to create account' });
+    }
+
+    // Create CRM contact for new user
+    try {
+      await supabase
+        .from('crm_contacts')
+        .insert([{
+          id: 'crm-' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4),
+          name: fullName,
+          email: cleanEmail,
+          company: brokerage,
+          type: 'realtor',
+          source: 'portal_signup',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }]);
+    } catch (crmError) {
+      console.error('CRM contact creation failed:', crmError);
+      // Non-critical, don't fail the signup
+    }
+
+    // Track signup activity
+    try {
+      await supabase
+        .from('crm_activity')
+        .insert([{
+          crm_id: cleanEmail,
+          type: 'signup',
+          subject: 'New Signup',
+          body: 'Portal signup - Brokerage: ' + brokerage,
+          date: new Date().toISOString()
+        }]);
+    } catch (activityError) {
+      console.error('Activity tracking failed:', activityError);
     }
 
     // Notify Kristy via Formspree
     try {
+      const readableTime = new Date().toLocaleString('en-US', {
+        timeZone: 'America/New_York',
+        month: '2-digit',
+        day: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+
       const formBody = new URLSearchParams();
       formBody.append('_subject', 'New Agent Edge Partner Signup!');
       formBody.append('Full_Name', fullName);
-      formBody.append('Email', email);
+      formBody.append('Email', cleanEmail);
       formBody.append('Brokerage', brokerage);
       formBody.append('Username', cleanUsername);
       formBody.append('Signup_Date', readableTime);
@@ -101,14 +141,16 @@ export default async function handler(req, res) {
         body: formBody,
         headers: { 'Accept': 'application/json' }
       });
-    } catch (e) {}
+    } catch (e) {
+      console.error('Formspree notification failed:', e);
+    }
 
     return res.status(200).json({
       success: true,
       user: {
         username: cleanUsername,
         name: fullName,
-        email: email,
+        email: cleanEmail,
         brokerage: brokerage
       },
       role: 'trial',
