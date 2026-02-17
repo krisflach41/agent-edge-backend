@@ -1,3 +1,11 @@
+import { createClient } from '@supabase/supabase-js';
+
+// Initialize Supabase
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
+
 export default async function handler(req, res) {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', 'https://kristyflach.com');
@@ -16,37 +24,25 @@ export default async function handler(req, res) {
   try {
     const { userName, userEmail, action, details, currentScore, projectedScore, timestamp } = req.body;
 
-    const readableTime = new Date().toLocaleString('en-US', { 
-      timeZone: 'America/New_York',
-      month: '2-digit',
-      day: '2-digit', 
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-
-    if (process.env.GOOGLE_SHEETS_WEBHOOK_SIMULATOR) {
-      try {
-        await fetch(process.env.GOOGLE_SHEETS_WEBHOOK_SIMULATOR, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: 'SIMULATION',
-            userName,
-            userEmail,
-            action,
-            details: details.substring(0, 200),
-            currentScore,
-            projectedScore: `${projectedScore.min}-${projectedScore.max}`,
-            timestamp: readableTime
-          })
-        });
-      } catch (sheetError) {
-        console.error('Google Sheets logging failed:', sheetError);
-      }
+    // Log to Supabase credit_simulator_logs table
+    try {
+      await supabase
+        .from('credit_simulator_logs')
+        .insert([{
+          log_type: 'SIMULATION',
+          user_name: userName,
+          user_email: userEmail,
+          action: action,
+          details: details ? details.substring(0, 200) : null,
+          current_score: currentScore || null,
+          projected_score: projectedScore ? `${projectedScore.min}-${projectedScore.max}` : null,
+          created_at: new Date().toISOString()
+        }]);
+    } catch (logError) {
+      console.error('Supabase logging failed:', logError);
     }
 
-    console.log('Simulator Usage Logged:', { userName, action, timestamp: readableTime });
+    console.log('Simulator Usage Logged:', { userName, action });
 
     return res.status(200).json({
       success: true,
