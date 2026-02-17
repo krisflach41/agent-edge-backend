@@ -1,3 +1,11 @@
+import { createClient } from '@supabase/supabase-js';
+
+// Initialize Supabase
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
+
 export default async function handler(req, res) {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', 'https://kristyflach.com');
@@ -23,68 +31,52 @@ export default async function handler(req, res) {
     const cleanUsername = username.toLowerCase().trim();
     const hashedPassword = simpleHash(password);
 
-    // Verify credentials against Google Sheet
-    if (!process.env.AUTH_SHEETS_WEBHOOK) {
-      return res.status(500).json({ success: false, message: 'Auth not configured' });
-    }
+    // Query Supabase users table
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('username', cleanUsername)
+      .eq('password', hashedPassword)
+      .single();
 
-    const sheetResponse = await fetch(process.env.AUTH_SHEETS_WEBHOOK, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'login',
-        username: cleanUsername,
-        password: hashedPassword
-      })
-    });
-
-    const sheetResult = await sheetResponse.json();
-
-    if (!sheetResult.success) {
+    if (error || !user) {
       return res.status(401).json({ success: false, message: 'Invalid username or password' });
     }
 
-    // Track login in Activity tab
-    if (process.env.TRACKING_SHEETS_WEBHOOK) {
-      try {
-        const readableTime = new Date().toLocaleString('en-US', {
-          timeZone: 'America/New_York',
-          month: '2-digit',
-          day: '2-digit',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        });
+    // Update last login timestamp
+    await supabase
+      .from('users')
+      .update({ last_login: new Date().toISOString() })
+      .eq('username', cleanUsername);
 
-        await fetch(process.env.TRACKING_SHEETS_WEBHOOK, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            timestamp: readableTime,
-            userName: sheetResult.user.name,
-            userEmail: sheetResult.user.email,
-            collection: 'Portal',
-            tool: 'Authentication',
-            action: 'Login',
-            details: 'Portal login'
-          })
-        });
-      } catch (e) {}
+    // Track login in activity
+    try {
+      await supabase
+        .from('crm_activity')
+        .insert([{
+          crm_id: user.email,
+          type: 'login',
+          subject: 'Portal Login',
+          body: 'User logged into portal',
+          date: new Date().toISOString()
+        }]);
+    } catch (activityError) {
+      console.error('Activity tracking failed:', activityError);
     }
 
     // Return user profile (never return password)
     return res.status(200).json({
       success: true,
       user: {
-        username: cleanUsername,
-        name: sheetResult.user.name,
-        email: sheetResult.user.email,
-        brokerage: sheetResult.user.brokerage
+        username: user.username,
+        name: user.full_name,
+        email: user.email,
+        brokerage: user.brokerage
       },
-      tempPassword: sheetResult.tempPassword || false,
-      isAdmin: sheetResult.isAdmin || false,
-      role: sheetResult.role || 'partner',
-      trialStart: sheetResult.trialStart || ''
+      tempPassword: user.temp_password || false,
+      isAdmin: user.is_admin || false,
+      role: user.role || 'trial',
+      trialStart: user.trial_start_date || ''
     });
 
   } catch (error) {
