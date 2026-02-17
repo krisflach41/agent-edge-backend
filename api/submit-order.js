@@ -1,3 +1,11 @@
+import { createClient } from '@supabase/supabase-js';
+
+// Initialize Supabase
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
+
 export default async function handler(req, res) {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', 'https://kristyflach.com');
@@ -20,58 +28,66 @@ export default async function handler(req, res) {
       return res.status(400).json({ success: false, message: 'Missing required fields' });
     }
 
-    // Build readable order summary
-    let orderItems = [];
-    
-    if (cart.marketing && cart.marketing.length > 0) {
-      cart.marketing.forEach(item => orderItems.push('Marketing: ' + item));
-    }
-    
-    if (cart.advisory && Object.keys(cart.advisory).length > 0) {
-      Object.keys(cart.advisory).forEach(reportType => {
-        const props = cart.advisory[reportType];
-        const displayName = getReportName(reportType);
-        const addresses = props.map(p => p.address).join(', ');
-        orderItems.push('Report: ' + displayName + ' (' + props.length + ' properties: ' + addresses + ')');
-      });
-    }
-    
-    if (cart.websites && cart.websites.length > 0) {
-      cart.websites.forEach(w => orderItems.push('Website: ' + w.address));
-    }
-
-    const readableTime = new Date().toLocaleString('en-US', {
-      timeZone: 'America/New_York',
-      month: '2-digit',
-      day: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-
     // Generate order ID
     const orderId = 'ORD-' + Date.now().toString(36).toUpperCase();
 
-    // Send to Google Sheets Orders tab
-    if (process.env.TRACKING_SHEETS_WEBHOOK) {
-      await fetch(process.env.TRACKING_SHEETS_WEBHOOK, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'order',
-          orderId: orderId,
-          timestamp: readableTime,
-          name: name,
-          email: email,
-          brokerage: brokerage,
-          branding: branding || '',
-          items: orderItems.join(' | '),
-          itemCount: orderItems.length,
-          notes: notes || '',
-          status: 'New',
-          cartJson: JSON.stringify(cart)
-        })
-      });
+    // Calculate item count
+    let itemCount = 0;
+    if (cart.marketing) itemCount += cart.marketing.length;
+    if (cart.advisory) itemCount += Object.keys(cart.advisory).length;
+    if (cart.websites) itemCount += cart.websites.length;
+
+    // Determine co-branding
+    const coBranding = branding && branding !== 'None' && branding.toLowerCase() !== 'no';
+
+    // Insert order into Supabase
+    const { data, error } = await supabase
+      .from('orders')
+      .insert([{
+        order_id: orderId,
+        user_email: email,
+        user_name: name,
+        brokerage: brokerage || null,
+        items: cart,
+        item_count: itemCount,
+        co_branding: coBranding,
+        co_brand_layout: null,
+        notes: notes || null,
+        status: 'new',
+        cart_data: cart,
+        created_at: new Date().toISOString()
+      }])
+      .select();
+
+    if (error) {
+      console.error('Supabase insert error:', error);
+      return res.status(500).json({ success: false, message: 'Failed to submit order' });
+    }
+
+    // Track order in activity
+    try {
+      const orderSummary = [];
+      if (cart.marketing && cart.marketing.length > 0) {
+        orderSummary.push('Marketing: ' + cart.marketing.join(', '));
+      }
+      if (cart.advisory && Object.keys(cart.advisory).length > 0) {
+        orderSummary.push('Reports: ' + Object.keys(cart.advisory).join(', '));
+      }
+      if (cart.websites && cart.websites.length > 0) {
+        orderSummary.push('Websites: ' + cart.websites.length + ' properties');
+      }
+
+      await supabase
+        .from('crm_activity')
+        .insert([{
+          crm_id: email,
+          type: 'order_submitted',
+          subject: 'Order Submitted',
+          body: orderSummary.join(' | '),
+          date: new Date().toISOString()
+        }]);
+    } catch (activityError) {
+      console.error('Activity tracking failed:', activityError);
     }
 
     return res.status(200).json({ 
@@ -84,17 +100,4 @@ export default async function handler(req, res) {
     console.error('Order submission error:', error);
     return res.status(500).json({ success: false, message: 'Server error' });
   }
-}
-
-function getReportName(type) {
-  const names = {
-    bid: 'Bid Over Ask',
-    buyrent: 'Buy vs Rent',
-    costwaiting: 'Cost of Waiting',
-    appreciation: 'Appreciation',
-    investment: 'Investment Property',
-    amortization: 'Mortgage Amortization',
-    reportcard: 'Real Estate Report Card'
-  };
-  return names[type] || type;
 }
