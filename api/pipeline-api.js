@@ -1,3 +1,11 @@
+import { createClient } from '@supabase/supabase-js';
+
+// Initialize Supabase
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
+
 export default async function handler(req, res) {
   var origin = req.headers.origin || '';
   var allowedOrigins = ['https://kristyflach.com', 'https://agent-edge-backend.vercel.app'];
@@ -17,58 +25,89 @@ export default async function handler(req, res) {
   // ===== GET CONTACTS =====
   if (req.method === 'GET' && action === 'list') {
     try {
-      var sheetId = '1GTJy_IilOPiGNaJ3YxRS8UnY5iBZPiHpF2Nhbt0Zt4A';
+      // Fetch from Supabase pipeline tables
+      const { data: clients, error: clientsError } = await supabase
+        .from('pipeline_clients')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-      var clientsUrl = 'https://docs.google.com/spreadsheets/d/' + sheetId + '/gviz/tq?tqx=out:json&sheet=Clients';
-      var clientsResp = await fetch(clientsUrl);
-      var clientsText = await clientsResp.text();
-      var clients = parseGviz(clientsText);
+      if (clientsError) {
+        console.error('Supabase clients error:', clientsError);
+        return res.status(200).json({ success: true, contacts: [] });
+      }
 
-      var borrowersUrl = 'https://docs.google.com/spreadsheets/d/' + sheetId + '/gviz/tq?tqx=out:json&sheet=Borrowers';
-      var borrowersResp = await fetch(borrowersUrl);
-      var borrowersText = await borrowersResp.text();
-      var borrowerRows = parseGvizRaw(borrowersText);
+      // Fetch borrowers for all clients
+      const { data: borrowers } = await supabase
+        .from('pipeline_borrowers')
+        .select('*');
 
-      var notesUrl = 'https://docs.google.com/spreadsheets/d/' + sheetId + '/gviz/tq?tqx=out:json&sheet=ContactNotes';
-      var notesResp = await fetch(notesUrl);
-      var notesText = await notesResp.text();
-      var noteRows = parseGvizRaw(notesText);
+      // Fetch notes for all clients
+      const { data: notes } = await supabase
+        .from('pipeline_notes')
+        .select('*')
+        .order('date', { ascending: false });
 
-      var contacts = clients.map(function(row) {
-        var contactId = row[0];
-        var contact = {
-          id: contactId,
-          name: row[1] || '', phone: row[2] || '', email: row[3] || '',
-          stage: row[4] || 'cold', source: row[5] || 'organic', realtorName: row[6] || '',
-          loanType: row[7] || '', loanYear: row[8] || '', interestRate: row[9] || '',
-          lockStatus: row[10] || '', subjectAddress: row[11] || '',
+      // Map contacts with their borrowers and notes
+      var contacts = (clients || []).map(function(client) {
+        return {
+          id: client.contact_id,
+          name: client.name || '',
+          phone: client.phone || '',
+          email: client.email || '',
+          stage: client.stage || 'cold',
+          source: client.source || 'organic',
+          realtorName: client.realtor_name || '',
+          loanType: client.loan_type || '',
+          loanYear: client.loan_year || '',
+          interestRate: client.interest_rate || '',
+          lockStatus: client.lock_status || '',
+          subjectAddress: client.subject_address || '',
           dates: {
-            mutual: row[12] || '', emd: row[13] || '', intent: row[14] || '',
-            appraisal: row[15] || '', inspection: row[16] || '', conditional: row[17] || '',
-            finalApproval: row[18] || '', finalCD: row[19] || '', closing: row[20] || ''
+            mutual: client.date_mutual || '',
+            emd: client.date_emd || '',
+            intent: client.date_intent || '',
+            appraisal: client.date_appraisal || '',
+            inspection: client.date_inspection || '',
+            conditional: client.date_conditional || '',
+            finalApproval: client.date_final_approval || '',
+            finalCD: client.date_final_cd || '',
+            closing: client.date_closing || ''
           },
-          createdAt: row[21] || '', updatedAt: row[22] || '',
-          borrowers: [], notes: [], documents: []
+          createdAt: client.created_at || '',
+          updatedAt: client.updated_at || '',
+          borrowers: (borrowers || [])
+            .filter(function(b) { return b.contact_id === client.contact_id; })
+            .map(function(b) {
+              return {
+                name: b.name || '',
+                currentAddress: b.current_address || '',
+                ownRent: b.own_rent || '',
+                monthlyPayment: b.monthly_payment || '',
+                retainSell: b.retain_sell || '',
+                employer: b.employer || '',
+                selfReportedWages: b.self_reported_wages || '',
+                incomeType: b.income_type || '',
+                w2Year1: b.w2_year1 || '',
+                w2Year2: b.w2_year2 || '',
+                ytd: b.ytd || '',
+                qualifyingEarnings: b.qualifying_earnings || ''
+              };
+            }),
+          notes: (notes || [])
+            .filter(function(n) { return n.contact_id === client.contact_id; })
+            .map(function(n) {
+              return {
+                type: n.type || 'phone',
+                text: n.text || '',
+                date: n.date || ''
+              };
+            }),
+          documents: []
         };
+      });
 
-        borrowerRows.forEach(function(b) {
-          if (b[0] === contactId) {
-            contact.borrowers.push({
-              name: b[2] || '', currentAddress: b[3] || '', ownRent: b[4] || '',
-              monthlyPayment: b[5] || '', retainSell: b[6] || '', employer: b[7] || '',
-              selfReportedWages: b[8] || '', incomeType: b[9] || '',
-              w2Year1: b[10] || '', w2Year2: b[11] || '', ytd: b[12] || '',
-              qualifyingEarnings: b[13] || ''
-            });
-          }
-        });
-
-        noteRows.forEach(function(n) {
-          if (n[0] === contactId) {
-            contact.notes.push({ type: n[2] || 'phone', text: n[3] || '', date: n[4] || '' });
-          }
-        });
-
+      // Ensure each contact has at least one empty borrower
+      contacts.forEach(function(contact) {
         if (contact.borrowers.length === 0) {
           contact.borrowers.push({
             name:'', currentAddress:'', ownRent:'', monthlyPayment:'',
@@ -76,8 +115,6 @@ export default async function handler(req, res) {
             w2Year1:'', w2Year2:'', ytd:'', qualifyingEarnings:''
           });
         }
-
-        return contact;
       });
 
       return res.status(200).json({ success: true, contacts: contacts });
@@ -94,62 +131,120 @@ export default async function handler(req, res) {
   }
 
   try {
-    var webhookUrl = process.env.TRACKING_SHEETS_WEBHOOK;
-    if (!webhookUrl) {
-      return res.status(500).json({ success: false, message: 'Webhook not configured' });
-    }
-
-    var payload = {};
-
     if (action === 'save') {
-      payload = req.body;
-      payload.type = 'saveContact';
+      const contact = req.body;
+      const contactId = contact.id || 'pipeline-' + Date.now().toString(36);
+
+      // Save client to Supabase
+      const clientData = {
+        contact_id: contactId,
+        name: contact.name,
+        phone: contact.phone,
+        email: contact.email,
+        stage: contact.stage,
+        source: contact.source,
+        realtor_name: contact.realtorName,
+        loan_type: contact.loanType,
+        loan_year: contact.loanYear,
+        interest_rate: contact.interestRate,
+        lock_status: contact.lockStatus,
+        subject_address: contact.subjectAddress,
+        date_mutual: contact.dates?.mutual,
+        date_emd: contact.dates?.emd,
+        date_intent: contact.dates?.intent,
+        date_appraisal: contact.dates?.appraisal,
+        date_inspection: contact.dates?.inspection,
+        date_conditional: contact.dates?.conditional,
+        date_final_approval: contact.dates?.finalApproval,
+        date_final_cd: contact.dates?.finalCD,
+        date_closing: contact.dates?.closing,
+        updated_at: new Date().toISOString()
+      };
+
+      // Check if exists
+      const { data: existing } = await supabase
+        .from('pipeline_clients')
+        .select('contact_id')
+        .eq('contact_id', contactId)
+        .single();
+
+      if (existing) {
+        // Update
+        await supabase
+          .from('pipeline_clients')
+          .update(clientData)
+          .eq('contact_id', contactId);
+      } else {
+        // Insert
+        clientData.created_at = new Date().toISOString();
+        await supabase
+          .from('pipeline_clients')
+          .insert([clientData]);
+      }
+
+      // Save borrowers (delete old, insert new)
+      if (contact.borrowers && contact.borrowers.length > 0) {
+        await supabase
+          .from('pipeline_borrowers')
+          .delete()
+          .eq('contact_id', contactId);
+
+        const borrowerData = contact.borrowers
+          .filter(function(b) { return b.name; })
+          .map(function(b) {
+            return {
+              contact_id: contactId,
+              name: b.name,
+              current_address: b.currentAddress,
+              own_rent: b.ownRent,
+              monthly_payment: b.monthlyPayment,
+              retain_sell: b.retainSell,
+              employer: b.employer,
+              self_reported_wages: b.selfReportedWages,
+              income_type: b.incomeType,
+              w2_year1: b.w2Year1,
+              w2_year2: b.w2Year2,
+              ytd: b.ytd,
+              qualifying_earnings: b.qualifyingEarnings
+            };
+          });
+
+        if (borrowerData.length > 0) {
+          await supabase
+            .from('pipeline_borrowers')
+            .insert(borrowerData);
+        }
+      }
+
+      return res.status(200).json({ success: true, id: contactId });
 
     } else if (action === 'delete') {
-      payload = { type: 'deleteContact', contactId: req.body.contactId };
+      const contactId = req.body.contactId;
+      
+      // Delete from all pipeline tables
+      await supabase.from('pipeline_borrowers').delete().eq('contact_id', contactId);
+      await supabase.from('pipeline_notes').delete().eq('contact_id', contactId);
+      await supabase.from('pipeline_clients').delete().eq('contact_id', contactId);
+
+      return res.status(200).json({ success: true });
 
     } else if (action === 'updateStage') {
-      payload = {
-        type: 'updateContactStage',
-        contactId: req.body.contactId,
-        stage: req.body.stage,
-        updatedAt: req.body.updatedAt || new Date().toISOString()
-      };
+      await supabase
+        .from('pipeline_clients')
+        .update({
+          stage: req.body.stage,
+          updated_at: req.body.updatedAt || new Date().toISOString()
+        })
+        .eq('contact_id', req.body.contactId);
+
+      return res.status(200).json({ success: true });
 
     } else {
       return res.status(400).json({ error: 'Unknown action: ' + action });
     }
 
-    await fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-
-    return res.status(200).json({ success: true });
-
   } catch (error) {
     console.error('Pipeline API error:', error);
     return res.status(500).json({ success: false, message: error.toString() });
   }
-}
-
-function parseGviz(text) {
-  var jsonStr = text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\);/);
-  if (!jsonStr) return [];
-  var json = JSON.parse(jsonStr[1]);
-  var rows = json.table.rows || [];
-  return rows.map(function(row) {
-    return row.c.map(function(cell) { return cell && cell.v != null ? String(cell.v) : ''; });
-  }).filter(function(row) { return row[0] && row[0] !== 'Contact ID'; });
-}
-
-function parseGvizRaw(text) {
-  var jsonStr = text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\);/);
-  if (!jsonStr) return [];
-  var json = JSON.parse(jsonStr[1]);
-  var rows = json.table.rows || [];
-  return rows.map(function(row) {
-    return row.c.map(function(cell) { return cell && cell.v != null ? String(cell.v) : ''; });
-  }).filter(function(row) { return row[0] && row[0] !== 'Contact ID'; });
 }
