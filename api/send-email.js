@@ -18,8 +18,19 @@ export default async function handler(req, res) {
       return res.status(500).json({ success: false, message: 'Resend API key not configured' });
     }
 
-    var { to, subject, body, replyTo } = req.body;
+    var { to, subject, body, replyTo, type, name } = req.body;
 
+    // ===== TEMPLATE MODE: type + to + name =====
+    if (type && to && name) {
+      var template = getTemplate(type, name);
+      if (!template) {
+        return res.status(400).json({ success: false, message: 'Unknown email type: ' + type });
+      }
+      subject = template.subject;
+      body = template.body;
+    }
+
+    // ===== GENERIC MODE: to + subject + body =====
     if (!to || !subject || !body) {
       return res.status(400).json({ success: false, message: 'Missing required fields: to, subject, body' });
     }
@@ -55,6 +66,66 @@ export default async function handler(req, res) {
     console.error('Send email error:', error);
     return res.status(500).json({ success: false, message: error.toString() });
   }
+}
+
+// ===== EMAIL TEMPLATES =====
+function getTemplate(type, name) {
+  if (type === 'welcome') {
+    return {
+      subject: 'Welcome to the Team, ' + name + '! 🎉',
+      body:
+        '<h2 style="color: #1a2b5a; margin-top: 0;">Welcome to Agent Edge!</h2>' +
+        '<p>Hi ' + name + ',</p>' +
+        '<p>I\'m so excited to officially welcome you as a Partner! Here\'s what being my partner means for your business:</p>' +
+        '<div style="background: #f0f7ff; border-radius: 8px; padding: 16px 20px; margin: 20px 0;">' +
+          '<p style="margin: 0 0 8px;"><strong>✓ Co-Branded Materials</strong> — Your headshot and branding on every report and flyer</p>' +
+          '<p style="margin: 0 0 8px;"><strong>✓ Unlimited AI Content</strong> — Social media posts created for you in seconds</p>' +
+          '<p style="margin: 0 0 8px;"><strong>✓ Full Calculator Suite</strong> — Income, self-employed, and amortization tools</p>' +
+          '<p style="margin: 0 0 8px;"><strong>✓ Credit Score Tools</strong> — Simulator and education resources</p>' +
+          '<p style="margin: 0;"><strong>✓ Priority Support</strong> — Direct line to me for your deals</p>' +
+        '</div>' +
+        '<p>If you haven\'t uploaded your headshot yet, you can do that anytime from your <strong>Profile</strong> page inside the portal. That\'s the key to unlocking co-branded materials.</p>' +
+        '<p style="text-align: center; margin: 25px 0;">' +
+          '<a href="https://kristyflach.com/portal.html" style="display: inline-block; padding: 12px 32px; background: #1a2b5a; color: white; border-radius: 6px; text-decoration: none; font-weight: bold;">Go to Your Portal</a>' +
+        '</p>' +
+        '<p>I\'m here to help you grow. Don\'t hesitate to reach out anytime.</p>'
+    };
+  }
+
+  if (type === 'goodbye') {
+    return {
+      subject: name + ', sorry to see you go',
+      body:
+        '<p>Hi ' + name + ',</p>' +
+        '<p>I appreciate you giving Agent Edge a try. I understand it might not have been the right fit at this time, and that\'s completely okay.</p>' +
+        '<p>Your feedback matters to me. If there\'s anything specific that didn\'t work for you, or something you wished the platform had, I\'d genuinely love to hear about it. It helps me build something better.</p>' +
+        '<p>Your account has been deactivated, but your door is always open. If you\'d like to come back at any point, just reach out and I\'ll get you set up.</p>' +
+        '<p>Wishing you the best,</p>'
+    };
+  }
+
+  if (type === 'trial-ending') {
+    return {
+      subject: name + ', your Agent Edge trial ends tomorrow!',
+      body:
+        '<h2 style="color: #d97706; margin-top: 0;">⚡ Your Trial Ends Tomorrow!</h2>' +
+        '<p>Hi ' + name + ',</p>' +
+        '<p>Just a heads up — your 7-day Agent Edge trial wraps up tomorrow. I hope you\'ve had a chance to explore everything the portal has to offer!</p>' +
+        '<p>When your trial ends, you\'ll be asked to either upgrade to a full Partner membership or cancel. Here\'s what you\'d unlock as a Partner:</p>' +
+        '<div style="background: #f0f7ff; border-radius: 8px; padding: 16px 20px; margin: 20px 0;">' +
+          '<p style="margin: 0 0 8px;">✓ Co-branded reports and flyers with your photo</p>' +
+          '<p style="margin: 0 0 8px;">✓ Unlimited AI-generated social media content</p>' +
+          '<p style="margin: 0 0 8px;">✓ Full access to financial calculators and credit tools</p>' +
+          '<p style="margin: 0;">✓ Priority support for your deals</p>' +
+        '</div>' +
+        '<p style="text-align: center; margin: 25px 0;">' +
+          '<a href="https://kristyflach.com/portal.html" style="display: inline-block; padding: 12px 32px; background: #1a2b5a; color: white; border-radius: 6px; text-decoration: none; font-weight: bold;">Visit Your Portal</a>' +
+        '</p>' +
+        '<p>Have questions? I\'d love to chat about how we can work together.</p>'
+    };
+  }
+
+  return null;
 }
 
 function buildEmail(bodyHtml) {
