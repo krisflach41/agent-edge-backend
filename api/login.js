@@ -70,6 +70,19 @@ export default async function handler(req, res) {
       console.error('Activity tracking failed:', activityError);
     }
 
+    // Check if user has a headshot in CRM contacts
+    let hasHeadshot = false;
+    try {
+      const { data: contact } = await supabase
+        .from('crm_contacts')
+        .select('headshot_url')
+        .eq('id', cleanEmail)
+        .single();
+      hasHeadshot = !!(contact && contact.headshot_url);
+    } catch (e) {
+      // Non-critical
+    }
+
     // Return user profile (never return password)
     return res.status(200).json({
       success: true,
@@ -82,7 +95,8 @@ export default async function handler(req, res) {
       tempPassword: user.temp_password || false,
       isAdmin: user.is_admin || false,
       role: user.role || 'trial',
-      trialStart: user.trial_start_date || ''
+      trialStart: user.trial_start_date || '',
+      hasHeadshot: hasHeadshot
     });
 
   } catch (error) {
