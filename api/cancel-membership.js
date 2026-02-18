@@ -95,6 +95,21 @@ export default async function handler(req, res) {
       console.error('Formspree notification failed:', e);
     }
 
+    // ===== STEP 4: Send goodbye email =====
+    try {
+      await fetch('https://agent-edge-backend.vercel.app/api/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'goodbye',
+          to: cleanEmail,
+          name: userData?.full_name || 'Friend'
+        })
+      });
+    } catch (e) {
+      console.error('Goodbye email failed:', e);
+    }
+
     return res.status(200).json({ success: true, message: 'Account cancelled' });
 
   } catch (error) {
