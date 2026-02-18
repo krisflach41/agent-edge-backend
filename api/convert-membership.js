@@ -116,6 +116,21 @@ export default async function handler(req, res) {
       console.error('Formspree notification failed:', e);
     }
 
+    // ===== STEP 5: Send welcome email to new partner =====
+    try {
+      await fetch('https://agent-edge-backend.vercel.app/api/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'welcome',
+          to: cleanEmail,
+          name: (await supabase.from('users').select('full_name').eq('email', cleanEmail).single()).data?.full_name || 'Partner'
+        })
+      });
+    } catch (e) {
+      console.error('Welcome email failed:', e);
+    }
+
     return res.status(200).json({ success: true, message: 'Welcome to the team!' });
 
   } catch (error) {
