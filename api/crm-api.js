@@ -107,7 +107,7 @@ export default async function handler(req, res) {
       if (c.shared_loan) richData.shared_loan = c.shared_loan;
       // Borrower personal fields that don't have dedicated columns
       var personalFields = [
-        'own_or_rent','monthly_payment','retain_or_sell',
+        'own_rent','own_or_rent','monthly_payment','retain_sell','retain_or_sell',
         'prev_address','prev_city','prev_state','prev_zip',
         'marital_status','dependents','years_school',
         'loan_type','interest_rate','lock_status','subject_address',
