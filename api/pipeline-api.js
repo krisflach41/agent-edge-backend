@@ -62,6 +62,7 @@ export default async function handler(req, res) {
           interestRate: client.interest_rate || '',
           lockStatus: client.lock_status || '',
           subjectAddress: client.subject_address || '',
+          crm_contact_id: client.crm_contact_id || null,
           dates: {
             mutual: client.date_mutual || '',
             emd: client.date_emd || '',
@@ -80,6 +81,8 @@ export default async function handler(req, res) {
             .map(function(b) {
               return {
                 name: b.name || '',
+                role: b.role || 'borrower',
+                crm_id: b.crm_id || null,
                 currentAddress: b.current_address || '',
                 ownRent: b.own_rent || '',
                 monthlyPayment: b.monthly_payment || '',
@@ -149,6 +152,7 @@ export default async function handler(req, res) {
         interest_rate: contact.interestRate,
         lock_status: contact.lockStatus,
         subject_address: contact.subjectAddress,
+        crm_contact_id: contact.crm_contact_id || null,
         date_mutual: contact.dates?.mutual,
         date_emd: contact.dates?.emd,
         date_intent: contact.dates?.intent,
@@ -195,6 +199,8 @@ export default async function handler(req, res) {
             return {
               contact_id: contactId,
               name: b.name,
+              role: b.role || 'borrower',
+              crm_id: b.crm_id || b.crmId || null,
               current_address: b.currentAddress,
               own_rent: b.ownRent,
               monthly_payment: b.monthlyPayment,
