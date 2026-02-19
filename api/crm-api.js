@@ -30,9 +30,26 @@ export default async function handler(req, res) {
         if (!contact || contact.length === 0) {
           return res.status(404).json({ success: false, message: 'Not found' });
         }
+        // Merge the JSONB 'data' column back into the contact object
+        var c = contact[0];
+        if (c.data && typeof c.data === 'object') {
+          var richData = c.data;
+          Object.keys(richData).forEach(function(k) {
+            if (c[k] === undefined || c[k] === null) {
+              c[k] = richData[k];
+            }
+          });
+          // Always overwrite these from JSONB — they are the source of truth
+          if (richData.employers) c.employers = richData.employers;
+          if (richData.education) c.education = richData.education;
+          if (richData.reos) c.reos = richData.reos;
+          if (richData.documents) c.documents = richData.documents;
+          if (richData.co_borrowers) c.co_borrowers = richData.co_borrowers;
+          if (richData.shared_loan) c.shared_loan = richData.shared_loan;
+        }
         // Get activity history
         var activity = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_activity?crm_id=eq.' + req.query.id + '&order=date.desc&limit=50');
-        return res.status(200).json({ success: true, contact: contact[0], activity: activity || [] });
+        return res.status(200).json({ success: true, contact: c, activity: activity || [] });
       } catch (err) {
         return res.status(500).json({ success: false, message: err.toString() });
       }
@@ -80,6 +97,28 @@ export default async function handler(req, res) {
         c.id = 'crm-' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
       }
 
+      // Pack rich/nested data into the JSONB 'data' column
+      var richData = {};
+      if (c.employers) richData.employers = c.employers;
+      if (c.education) richData.education = c.education;
+      if (c.reos) richData.reos = c.reos;
+      if (c.documents) richData.documents = c.documents;
+      if (c.co_borrowers) richData.co_borrowers = c.co_borrowers;
+      if (c.shared_loan) richData.shared_loan = c.shared_loan;
+      // Borrower personal fields that don't have dedicated columns
+      var personalFields = [
+        'own_or_rent','monthly_payment','retain_or_sell',
+        'prev_address','prev_city','prev_state','prev_zip',
+        'marital_status','dependents','years_school',
+        'loan_type','interest_rate','lock_status','subject_address',
+        'date_mutual','date_emd','date_appraisal','date_inspection',
+        'date_conditional','date_final_approval','date_closing',
+        'linked_to','relationship'
+      ];
+      personalFields.forEach(function(f) {
+        if (c[f] !== undefined && c[f] !== null) richData[f] = c[f];
+      });
+
       var row = {
         id: c.id,
         name: c.name,
@@ -107,6 +146,7 @@ export default async function handler(req, res) {
         linkedin: c.linkedin || null,
         tiktok: c.tiktok || null,
         realtor_name: c.realtor_name || c.realtorName || null,
+        data: Object.keys(richData).length > 0 ? richData : null,
         updated_at: new Date().toISOString()
       };
 
