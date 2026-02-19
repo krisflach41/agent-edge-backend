@@ -245,6 +245,110 @@ export default async function handler(req, res) {
 
       return res.status(200).json({ success: true });
 
+    } else if (action === 'closeLoan') {
+      // ===== LOAN LIFECYCLE ENDPOINT =====
+      // Handles: funded, denied, suspended, withdrawn
+      // Creates history record, logs CRM activity, archives pipeline card
+      var cl = req.body;
+      if (!cl.contactId || !cl.outcome) {
+        return res.status(400).json({ success: false, message: 'Missing contactId or outcome' });
+      }
+
+      // 1. Fetch the full pipeline contact + borrowers for the snapshot
+      const { data: pClient } = await supabase
+        .from('pipeline_clients')
+        .select('*')
+        .eq('contact_id', cl.contactId)
+        .single();
+
+      const { data: pBorrowers } = await supabase
+        .from('pipeline_borrowers')
+        .select('*')
+        .eq('contact_id', cl.contactId);
+
+      const { data: pNotes } = await supabase
+        .from('pipeline_notes')
+        .select('*')
+        .eq('contact_id', cl.contactId);
+
+      // 2. Build the history record with full snapshot
+      var historyId = 'lh-' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+      var now = new Date().toISOString();
+
+      var historyRecord = {
+        id: historyId,
+        crm_contact_id: cl.crm_contact_id || (pClient ? pClient.crm_contact_id : null),
+        pipeline_contact_id: cl.contactId,
+        outcome: cl.outcome,
+        outcome_date: cl.outcome_date || now.split('T')[0],
+        primary_name: cl.primary_name || (pClient ? pClient.name : ''),
+        primary_phone: cl.primary_phone || (pClient ? pClient.phone : ''),
+        primary_email: cl.primary_email || (pClient ? pClient.email : ''),
+        borrowers: (pBorrowers || []).map(function(b) {
+          return { name: b.name, role: b.role, crm_id: b.crm_id };
+        }),
+        loan_type: cl.loan_type || (pClient ? pClient.loan_type : ''),
+        loan_amount: cl.loan_amount || null,
+        interest_rate: cl.interest_rate || (pClient ? pClient.interest_rate : ''),
+        lock_status: pClient ? pClient.lock_status : '',
+        subject_address: cl.subject_address || (pClient ? pClient.subject_address : ''),
+        strike_rate: cl.strike_rate || null,
+        source: pClient ? pClient.source : '',
+        realtor_name: pClient ? pClient.realtor_name : '',
+        dates: pClient ? {
+          mutual: pClient.date_mutual, emd: pClient.date_emd,
+          appraisal: pClient.date_appraisal, inspection: pClient.date_inspection,
+          conditional: pClient.date_conditional, final_approval: pClient.date_final_approval,
+          closing: pClient.date_closing
+        } : {},
+        qualifying_income: cl.qualifying_income || null,
+        combined_income: cl.combined_income || null,
+        snapshot: {
+          pipeline_client: pClient || {},
+          borrowers: pBorrowers || [],
+          notes: pNotes || []
+        },
+        notes: cl.notes || null,
+        created_at: now,
+        updated_at: now
+      };
+
+      // 3. Insert into loan_history
+      const { error: histErr } = await supabase
+        .from('loan_history')
+        .insert([historyRecord]);
+
+      if (histErr) {
+        console.error('History insert error:', histErr);
+        return res.status(500).json({ success: false, message: 'Failed to create history: ' + histErr.message });
+      }
+
+      // 4. Log activity on the CRM contact
+      var crmId = historyRecord.crm_contact_id;
+      if (crmId) {
+        var activityType = cl.outcome === 'funded' ? 'loan_funded' : 'loan_' + cl.outcome;
+        var activitySubject = cl.outcome === 'funded' 
+          ? 'Loan Funded — ' + (cl.loan_type || 'Loan') + ' @ ' + (cl.interest_rate || '?') + '%'
+          : 'Loan ' + cl.outcome.charAt(0).toUpperCase() + cl.outcome.slice(1);
+        var activityBody = historyRecord.primary_name + ' | ' + (cl.loan_type || '') + ' | ' + (cl.subject_address || 'No address') + ' | ' + historyRecord.outcome_date;
+        
+        await supabase.from('crm_activity').insert([{
+          crm_id: crmId,
+          type: activityType,
+          subject: activitySubject,
+          body: activityBody,
+          date: now
+        }]).catch(function() {});
+      }
+
+      // 5. Archive the pipeline card (update stage, don't delete — preserve the record)
+      await supabase
+        .from('pipeline_clients')
+        .update({ stage: cl.outcome === 'funded' ? 'closed' : 'archived', updated_at: now })
+        .eq('contact_id', cl.contactId);
+
+      return res.status(200).json({ success: true, historyId: historyId });
+
     } else {
       return res.status(400).json({ error: 'Unknown action: ' + action });
     }
