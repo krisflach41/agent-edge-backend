@@ -62,6 +62,8 @@ export default async function handler(req, res) {
           loanProgram: client.loan_program || '',
           occupancyType: client.occupancy_type || '',
           loanAmount: client.loan_amount || '',
+          appraisedValue: client.appraised_value || '',
+          loanNumber: client.loan_number || '',
           loanYear: client.loan_year || '',
           interestRate: client.interest_rate || '',
           lockStatus: client.lock_status || '',
@@ -109,7 +111,8 @@ export default async function handler(req, res) {
                 date: n.date || ''
               };
             }),
-          documents: []
+          documents: [],
+          tasks: client.tasks || []
         };
       });
 
@@ -156,11 +159,14 @@ export default async function handler(req, res) {
         loan_program: contact.loanProgram || null,
         occupancy_type: contact.occupancyType || null,
         loan_amount: contact.loanAmount || null,
+        appraised_value: contact.appraisedValue || null,
+        loan_number: contact.loanNumber || null,
         loan_year: contact.loanYear,
         interest_rate: contact.interestRate,
         lock_status: contact.lockStatus,
         subject_address: contact.subjectAddress,
         crm_contact_id: contact.crm_contact_id || null,
+        tasks: contact.tasks || null,
         date_mutual: contact.dates?.mutual,
         date_emd: contact.dates?.emd,
         date_intent: contact.dates?.intent,
