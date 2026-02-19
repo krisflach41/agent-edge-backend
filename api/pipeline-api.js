@@ -354,13 +354,15 @@ export default async function handler(req, res) {
           : 'Loan ' + cl.outcome.charAt(0).toUpperCase() + cl.outcome.slice(1);
         var activityBody = historyRecord.primary_name + ' | ' + (cl.loan_type || '') + ' | ' + (cl.subject_address || 'No address') + ' | ' + historyRecord.outcome_date;
         
-        await supabase.from('crm_activity').insert([{
-          crm_id: crmId,
-          type: activityType,
-          subject: activitySubject,
-          body: activityBody,
-          date: now
-        }]).catch(function() {});
+        try {
+          await supabase.from('crm_activity').insert([{
+            crm_id: crmId,
+            type: activityType,
+            subject: activitySubject,
+            body: activityBody,
+            date: now
+          }]);
+        } catch(e) { console.error('Activity insert error:', e); }
       }
 
       // 5. Archive the pipeline card (update stage, don't delete — preserve the record)
@@ -371,7 +373,7 @@ export default async function handler(req, res) {
 
       // 6. Convert CRM contacts to past_client
       if (crmId) {
-        await supabase.from('crm_contacts').update({ type: 'past_client' }).eq('id', crmId).catch(function(){});
+        try { await supabase.from('crm_contacts').update({ type: 'past_client' }).eq('id', crmId); } catch(e) { console.error('Type update error:', e); }
       }
       // Also convert any co-borrower CRM contacts
       if (pBorrowers && pBorrowers.length > 0) {
@@ -379,7 +381,7 @@ export default async function handler(req, res) {
           .filter(function(b) { return b.crm_id && b.crm_id !== crmId; })
           .map(function(b) { return b.crm_id; });
         for (var i = 0; i < coBorrowerCrmIds.length; i++) {
-          await supabase.from('crm_contacts').update({ type: 'past_client' }).eq('id', coBorrowerCrmIds[i]).catch(function(){});
+          try { await supabase.from('crm_contacts').update({ type: 'past_client' }).eq('id', coBorrowerCrmIds[i]); } catch(e) { console.error('Co-borrower type update error:', e); }
         }
       }
 
