@@ -110,6 +110,7 @@ export default async function handler(req, res) {
         'own_rent','own_or_rent','monthly_payment','retain_sell','retain_or_sell',
         'prev_address','prev_city','prev_state','prev_zip',
         'marital_status','dependents','years_school',
+        'transaction_type','loan_program','occupancy_type','loan_amount',
         'loan_type','interest_rate','lock_status','subject_address',
         'date_mutual','date_emd','date_appraisal','date_inspection',
         'date_conditional','date_final_approval','date_closing',
