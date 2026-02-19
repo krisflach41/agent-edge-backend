@@ -369,7 +369,52 @@ export default async function handler(req, res) {
         .update({ stage: cl.outcome === 'funded' ? 'closed' : 'archived', updated_at: now })
         .eq('contact_id', cl.contactId);
 
+      // 6. Convert CRM contacts to past_client
+      if (crmId) {
+        await supabase.from('crm_contacts').update({ type: 'past_client' }).eq('id', crmId).catch(function(){});
+      }
+      // Also convert any co-borrower CRM contacts
+      if (pBorrowers && pBorrowers.length > 0) {
+        var coBorrowerCrmIds = pBorrowers
+          .filter(function(b) { return b.crm_id && b.crm_id !== crmId; })
+          .map(function(b) { return b.crm_id; });
+        for (var i = 0; i < coBorrowerCrmIds.length; i++) {
+          await supabase.from('crm_contacts').update({ type: 'past_client' }).eq('id', coBorrowerCrmIds[i]).catch(function(){});
+        }
+      }
+
       return res.status(200).json({ success: true, historyId: historyId });
+
+    } else if (action === 'getHistory') {
+      // Fetch loan history for a CRM contact
+      var histCrmId = req.body.crm_contact_id || req.query.crm_contact_id;
+      if (!histCrmId) {
+        return res.status(400).json({ success: false, message: 'Missing crm_contact_id' });
+      }
+      // Primary matches
+      const { data: primaryHist } = await supabase
+        .from('loan_history')
+        .select('id, outcome, outcome_date, primary_name, loan_type, loan_amount, interest_rate, subject_address, borrowers, strike_rate, notes, created_at')
+        .eq('crm_contact_id', histCrmId)
+        .order('outcome_date', { ascending: false });
+
+      // Also find loans where this contact was a co-borrower (in JSONB borrowers array)
+      const { data: allHist } = await supabase
+        .from('loan_history')
+        .select('id, outcome, outcome_date, primary_name, loan_type, loan_amount, interest_rate, subject_address, borrowers, strike_rate, notes, created_at')
+        .neq('crm_contact_id', histCrmId)
+        .order('outcome_date', { ascending: false });
+
+      var combined = primaryHist || [];
+      var existingIds = combined.map(function(h) { return h.id; });
+      (allHist || []).forEach(function(h) {
+        if (h.borrowers) {
+          var found = h.borrowers.some(function(b) { return b.crm_id === histCrmId; });
+          if (found && existingIds.indexOf(h.id) === -1) { combined.push(h); }
+        }
+      });
+
+      return res.status(200).json({ success: true, history: combined });
 
     } else {
       return res.status(400).json({ error: 'Unknown action: ' + action });
