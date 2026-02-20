@@ -42,6 +42,7 @@ export default async function handler(req, res) {
           // Always overwrite these from JSONB — they are the source of truth
           if (richData.employers) c.employers = richData.employers;
           if (richData.education) c.education = richData.education;
+          if (richData.assets) c.assets = richData.assets;
           if (richData.reos) c.reos = richData.reos;
           if (richData.documents) c.documents = richData.documents;
           if (richData.co_borrowers) c.co_borrowers = richData.co_borrowers;
@@ -101,6 +102,7 @@ export default async function handler(req, res) {
       var richData = {};
       if (c.employers) richData.employers = c.employers;
       if (c.education) richData.education = c.education;
+      if (c.assets) richData.assets = c.assets;
       if (c.reos) richData.reos = c.reos;
       if (c.documents) richData.documents = c.documents;
       if (c.co_borrowers) richData.co_borrowers = c.co_borrowers;
