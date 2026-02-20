@@ -267,6 +267,76 @@ export default async function handler(req, res) {
 
     } else {
       return res.status(400).json({ error: 'Unknown action: ' + action });
+    // --- GET LINKED CONTACTS ---
+    // Find CRM-level relationships: who this contact is linked to + who lists this contact as a co-borrower
+    } else if (action === 'getLinkedContacts') {
+      var linkId = req.body.crm_id;
+      if (!linkId) return res.status(400).json({ success: false, message: 'Missing crm_id' });
+
+      var results = [];
+
+      // 1) Check if this contact has a linked_to field (they are a co-borrower on someone else's card)
+      // We already have this from the contact's own data, but let's also fetch the linked-to contact's name
+      var thisContact = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + linkId + '&select=id,name,data');
+      if (thisContact && thisContact.length > 0) {
+        var myData = thisContact[0].data;
+        if (myData && myData.linked_to) {
+          var linkedTo = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + myData.linked_to + '&select=id,name,type,phone,email');
+          if (linkedTo && linkedTo.length > 0) {
+            results.push({
+              direction: 'linked_to',
+              contact_id: linkedTo[0].id,
+              contact_name: linkedTo[0].name,
+              contact_type: linkedTo[0].type,
+              relationship: myData.relationship || ''
+            });
+          }
+        }
+      }
+
+      // 2) Find contacts whose co_borrowers array contains this contact's ID
+      // Supabase JSONB containment: data->'co_borrowers' @> '[{"contact_id":"xxx"}]'
+      var coBorrowerOf = await supaGet(SUPABASE_URL, SUPABASE_KEY, 
+        '/rest/v1/crm_contacts?select=id,name,type,phone,email&data->>linked_to=eq.' + linkId);
+      
+      // Also find contacts whose co_borrowers array has contact_id matching this ID
+      var coBorrowerOf2 = await supaGet(SUPABASE_URL, SUPABASE_KEY,
+        '/rest/v1/crm_contacts?select=id,name,type,data&data->co_borrowers=cs.[{"contact_id":"' + linkId + '"}]');
+
+      var seen = {};
+      (coBorrowerOf || []).forEach(function(c) {
+        if (c.id !== linkId && !seen[c.id]) {
+          seen[c.id] = true;
+          results.push({
+            direction: 'linked_from',
+            contact_id: c.id,
+            contact_name: c.name,
+            contact_type: c.type,
+            relationship: ''
+          });
+        }
+      });
+      (coBorrowerOf2 || []).forEach(function(c) {
+        if (c.id !== linkId && !seen[c.id]) {
+          seen[c.id] = true;
+          // Find this contact's relationship from the co_borrowers array
+          var rel = '';
+          if (c.data && c.data.co_borrowers) {
+            var match = c.data.co_borrowers.find(function(cb) { return cb.contact_id === linkId; });
+            if (match) rel = match.relationship || '';
+          }
+          results.push({
+            direction: 'co_borrower_on',
+            contact_id: c.id,
+            contact_name: c.name,
+            contact_type: c.type,
+            relationship: rel
+          });
+        }
+      });
+
+      return res.status(200).json({ success: true, links: results });
+
     }
 
   } catch (error) {
