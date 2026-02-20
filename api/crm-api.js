@@ -113,7 +113,7 @@ export default async function handler(req, res) {
         'own_rent','own_or_rent','monthly_payment','retain_sell','retain_or_sell',
         'prev_address','prev_city','prev_state','prev_zip',
         'marital_status','dependents','years_school',
-        'linked_to','relationship'
+        'linked_to','relationship','license_number'
       ];
       personalFields.forEach(function(f) {
         if (c[f] !== undefined && c[f] !== null) richData[f] = c[f];
@@ -264,6 +264,25 @@ export default async function handler(req, res) {
       }
 
       return res.status(200).json({ success: true, emailId: sendData.id });
+
+    // --- CLEAR LINK ---
+    // Remove linked_to and relationship from a co-borrower's CRM record
+    } else if (action === 'clearLink') {
+      var clearId = req.body.crm_id;
+      if (!clearId) return res.status(400).json({ success: false, message: 'Missing crm_id' });
+
+      // Fetch current data
+      var clearContact = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + clearId + '&select=id,data');
+      if (clearContact && clearContact.length > 0) {
+        var cData = clearContact[0].data || {};
+        delete cData.linked_to;
+        delete cData.relationship;
+        await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + clearId, 'PATCH', {
+          data: cData,
+          updated_at: new Date().toISOString()
+        });
+      }
+      return res.status(200).json({ success: true, message: 'Link cleared' });
 
     // --- GET LINKED CONTACTS ---
     // Find CRM-level relationships: who this contact is linked to + who lists this contact as a co-borrower
