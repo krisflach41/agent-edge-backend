@@ -310,10 +310,17 @@ export default async function handler(req, res) {
           return { name: b.name, role: b.role, crm_id: b.crm_id };
         }),
         loan_type: cl.loan_type || (pClient ? pClient.loan_type : ''),
+        transaction_type: cl.transaction_type || (pClient ? pClient.transaction_type : ''),
+        loan_program: cl.loan_program || (pClient ? pClient.loan_program : ''),
         loan_amount: cl.loan_amount || null,
         interest_rate: cl.interest_rate || (pClient ? pClient.interest_rate : ''),
         lock_status: pClient ? pClient.lock_status : '',
         subject_address: cl.subject_address || (pClient ? pClient.subject_address : ''),
+        subject_street: pClient ? pClient.subject_street : '',
+        subject_city: pClient ? pClient.subject_city : '',
+        subject_state: pClient ? pClient.subject_state : '',
+        subject_zip: pClient ? pClient.subject_zip : '',
+        appraised_value: pClient ? pClient.appraised_value : null,
         strike_rate: cl.strike_rate || null,
         source: pClient ? pClient.source : '',
         realtor_name: pClient ? pClient.realtor_name : '',
@@ -396,14 +403,14 @@ export default async function handler(req, res) {
       // Primary matches
       const { data: primaryHist } = await supabase
         .from('loan_history')
-        .select('id, outcome, outcome_date, primary_name, loan_type, loan_amount, interest_rate, subject_address, borrowers, strike_rate, notes, created_at')
+        .select('id, outcome, outcome_date, primary_name, loan_type, transaction_type, loan_program, loan_amount, interest_rate, subject_address, appraised_value, borrowers, strike_rate, realtor_name, source, notes, created_at')
         .eq('crm_contact_id', histCrmId)
         .order('outcome_date', { ascending: false });
 
       // Also find loans where this contact was a co-borrower (in JSONB borrowers array)
       const { data: allHist } = await supabase
         .from('loan_history')
-        .select('id, outcome, outcome_date, primary_name, loan_type, loan_amount, interest_rate, subject_address, borrowers, strike_rate, notes, created_at')
+        .select('id, outcome, outcome_date, primary_name, loan_type, transaction_type, loan_program, loan_amount, interest_rate, subject_address, appraised_value, borrowers, strike_rate, realtor_name, source, notes, created_at')
         .neq('crm_contact_id', histCrmId)
         .order('outcome_date', { ascending: false });
 
