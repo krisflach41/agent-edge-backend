@@ -1,6 +1,6 @@
 export default async function handler(req, res) {
   var origin = req.headers.origin || '';
-  var allowedOrigins = ['https://kristyflach.com', 'https://agent-edge-backend.vercel.app'];
+  var allowedOrigins = ['https://kristyflach.com', 'https://kristyflach41.github.io', 'https://agent-edge-backend.vercel.app'];
   if (allowedOrigins.indexOf(origin) !== -1) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   } else {
