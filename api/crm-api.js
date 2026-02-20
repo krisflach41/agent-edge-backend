@@ -265,8 +265,6 @@ export default async function handler(req, res) {
 
       return res.status(200).json({ success: true, emailId: sendData.id });
 
-    } else {
-      return res.status(400).json({ error: 'Unknown action: ' + action });
     // --- GET LINKED CONTACTS ---
     // Find CRM-level relationships: who this contact is linked to + who lists this contact as a co-borrower
     } else if (action === 'getLinkedContacts') {
@@ -337,6 +335,8 @@ export default async function handler(req, res) {
 
       return res.status(200).json({ success: true, links: results });
 
+    } else {
+      return res.status(400).json({ error: 'Unknown action: ' + action });
     }
 
   } catch (error) {
