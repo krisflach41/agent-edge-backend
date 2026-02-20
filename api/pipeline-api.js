@@ -425,6 +425,83 @@ export default async function handler(req, res) {
 
       return res.status(200).json({ success: true, history: combined });
 
+    } else if (action === 'getActiveLoans') {
+      // Fetch all active pipeline loans where this CRM contact appears as a borrower
+      // Used to show loan relationships on CRM cards
+      var loansCrmId = req.body.crm_contact_id || req.query.crm_contact_id;
+      if (!loansCrmId) {
+        return res.status(400).json({ success: false, message: 'Missing crm_contact_id' });
+      }
+
+      // Find all pipeline_borrowers rows where this contact is listed
+      const { data: borrowerRows } = await supabase
+        .from('pipeline_borrowers')
+        .select('contact_id, name, role, crm_id')
+        .eq('crm_id', loansCrmId);
+
+      // Also check pipeline_clients where this is the primary CRM contact
+      const { data: primaryRows } = await supabase
+        .from('pipeline_clients')
+        .select('contact_id, name, stage, loan_type, transaction_type, loan_program, interest_rate, loan_amount, subject_address, crm_contact_id')
+        .eq('crm_contact_id', loansCrmId)
+        .not('stage', 'in', '("closed","archived")');
+
+      // Collect all pipeline contact_ids this person is on
+      var pipelineIds = [];
+      (borrowerRows || []).forEach(function(b) {
+        if (pipelineIds.indexOf(b.contact_id) === -1) pipelineIds.push(b.contact_id);
+      });
+      (primaryRows || []).forEach(function(p) {
+        if (pipelineIds.indexOf(p.contact_id) === -1) pipelineIds.push(p.contact_id);
+      });
+
+      if (pipelineIds.length === 0) {
+        return res.status(200).json({ success: true, loans: [] });
+      }
+
+      // Fetch the full pipeline client records for these loans
+      const { data: loanClients } = await supabase
+        .from('pipeline_clients')
+        .select('contact_id, name, stage, loan_type, transaction_type, loan_program, interest_rate, loan_amount, subject_address, crm_contact_id')
+        .in('contact_id', pipelineIds)
+        .not('stage', 'in', '("closed","archived")');
+
+      // Fetch all borrowers on these loans
+      const { data: loanBorrowers } = await supabase
+        .from('pipeline_borrowers')
+        .select('contact_id, name, role, crm_id')
+        .in('contact_id', pipelineIds);
+
+      // Build the response
+      var loans = (loanClients || []).map(function(client) {
+        var borrowers = (loanBorrowers || []).filter(function(b) {
+          return b.contact_id === client.contact_id;
+        }).map(function(b) {
+          return { name: b.name, role: b.role, crm_id: b.crm_id };
+        });
+
+        // Determine this person's role on the loan
+        var myRole = 'primary';
+        if (client.crm_contact_id !== loansCrmId) {
+          var myBorrower = borrowers.find(function(b) { return b.crm_id === loansCrmId; });
+          myRole = myBorrower ? myBorrower.role : 'co-borrower';
+        }
+
+        return {
+          pipeline_id: client.contact_id,
+          loan_name: client.name || '',
+          stage: client.stage,
+          loan_type: client.loan_type || '',
+          interest_rate: client.interest_rate || '',
+          loan_amount: client.loan_amount || '',
+          subject_address: client.subject_address || '',
+          my_role: myRole,
+          borrowers: borrowers
+        };
+      });
+
+      return res.status(200).json({ success: true, loans: loans });
+
     } else {
       return res.status(400).json({ error: 'Unknown action: ' + action });
     }
