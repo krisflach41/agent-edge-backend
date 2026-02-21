@@ -271,17 +271,20 @@ export default async function handler(req, res) {
       // ===== LOAN LIFECYCLE ENDPOINT =====
       // Handles: funded, denied, suspended, withdrawn
       // Creates history record, logs CRM activity, archives pipeline card
+      try {
       var cl = req.body;
       if (!cl.contactId || !cl.outcome) {
         return res.status(400).json({ success: false, message: 'Missing contactId or outcome' });
       }
 
       // 1. Fetch the full pipeline contact + borrowers for the snapshot
-      const { data: pClient } = await supabase
+      const { data: pClient, error: pClientErr } = await supabase
         .from('pipeline_clients')
         .select('*')
         .eq('contact_id', cl.contactId)
-        .single();
+        .maybeSingle();
+
+      if (pClientErr) console.error('pClient fetch error:', pClientErr);
 
       const { data: pBorrowers } = await supabase
         .from('pipeline_borrowers')
@@ -393,6 +396,11 @@ export default async function handler(req, res) {
       }
 
       return res.status(200).json({ success: true, historyId: historyId });
+
+      } catch (closeLoanErr) {
+        console.error('closeLoan error:', closeLoanErr);
+        return res.status(500).json({ success: false, message: 'closeLoan failed: ' + (closeLoanErr.message || closeLoanErr.toString()) });
+      }
 
     } else if (action === 'getHistory') {
       // Fetch loan history for a CRM contact
