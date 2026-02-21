@@ -306,6 +306,7 @@ export default async function handler(req, res) {
         pipeline_contact_id: cl.contactId,
         outcome: cl.outcome,
         outcome_date: cl.outcome_date || now.split('T')[0],
+        loan_number: cl.loan_number || (pClient ? pClient.loan_number : '') || '',
         primary_name: cl.primary_name || (pClient ? pClient.name : ''),
         primary_phone: cl.primary_phone || (pClient ? pClient.phone : ''),
         primary_email: cl.primary_email || (pClient ? pClient.email : ''),
@@ -407,14 +408,14 @@ export default async function handler(req, res) {
       // Primary matches
       const { data: primaryHist } = await supabase
         .from('loan_history')
-        .select('id, outcome, outcome_date, primary_name, loan_type, transaction_type, loan_program, loan_amount, interest_rate, subject_address, appraised_value, borrowers, strike_rate, realtor_name, source, notes, created_at')
+        .select('id, outcome, outcome_date, loan_number, primary_name, loan_type, transaction_type, loan_program, loan_amount, interest_rate, subject_address, appraised_value, borrowers, strike_rate, realtor_name, source, notes, created_at')
         .eq('crm_contact_id', histCrmId)
         .order('outcome_date', { ascending: false });
 
       // Also find loans where this contact was a co-borrower (in JSONB borrowers array)
       const { data: allHist } = await supabase
         .from('loan_history')
-        .select('id, outcome, outcome_date, primary_name, loan_type, transaction_type, loan_program, loan_amount, interest_rate, subject_address, appraised_value, borrowers, strike_rate, realtor_name, source, notes, created_at')
+        .select('id, outcome, outcome_date, loan_number, primary_name, loan_type, transaction_type, loan_program, loan_amount, interest_rate, subject_address, appraised_value, borrowers, strike_rate, realtor_name, source, notes, created_at')
         .neq('crm_contact_id', histCrmId)
         .order('outcome_date', { ascending: false });
 
