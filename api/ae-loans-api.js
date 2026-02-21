@@ -588,6 +588,22 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, history: history });
     }
 
+    // ===== GET MONTHLY FUNDED (for dashboard) =====
+    if (action === 'getMonthlyFunded') {
+      var monthStart = req.body.month_start || req.query.month_start;
+      if (!monthStart) return res.status(400).json({ success: false, message: 'month_start required' });
+
+      const { data: history, error } = await supabase
+        .from('loan_history')
+        .select('id, ae_id, outcome, outcome_date, loan_amount')
+        .eq('outcome', 'funded')
+        .gte('outcome_date', monthStart)
+        .order('outcome_date', { ascending: false });
+
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true, history: history || [] });
+    }
+
     return res.status(400).json({ success: false, message: 'Unknown action: ' + action });
 
   } catch (err) {
