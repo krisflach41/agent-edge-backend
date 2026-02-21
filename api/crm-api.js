@@ -72,6 +72,24 @@ export default async function handler(req, res) {
       }
 
       var contacts = await supaGet(SUPABASE_URL, SUPABASE_KEY, url);
+      // Unpack JSONB 'data' column into each contact (same as get endpoint)
+      (contacts || []).forEach(function(c) {
+        if (c.data && typeof c.data === 'object') {
+          var richData = c.data;
+          Object.keys(richData).forEach(function(k) {
+            if (c[k] === undefined || c[k] === null) {
+              c[k] = richData[k];
+            }
+          });
+          if (richData.employers) c.employers = richData.employers;
+          if (richData.education) c.education = richData.education;
+          if (richData.assets) c.assets = richData.assets;
+          if (richData.reos) c.reos = richData.reos;
+          if (richData.documents) c.documents = richData.documents;
+          if (richData.co_borrowers) c.co_borrowers = richData.co_borrowers;
+          if (richData.shared_loan) c.shared_loan = richData.shared_loan;
+        }
+      });
       return res.status(200).json({ success: true, contacts: contacts || [] });
 
     } catch (err) {
