@@ -126,7 +126,7 @@ export default async function handler(req, res) {
         var crmIds = borrowers.map(function(b) { return b.crm_contact_id; });
         const { data: contacts } = await supabase
           .from('crm_contacts')
-          .select('id, first_name, last_name, email, phone')
+          .select('id, name, email, phone')
           .in('id', crmIds);
 
         var contactMap = {};
@@ -143,7 +143,7 @@ export default async function handler(req, res) {
             role: b.role,
             qualifying_income: b.qualifying_income,
             added_at: b.added_at,
-            name: ((c.first_name || '') + ' ' + (c.last_name || '')).trim() || 'Unknown',
+            name: c.name || 'Unknown',
             email: c.email || '',
             phone: c.phone || ''
           };
@@ -226,7 +226,7 @@ export default async function handler(req, res) {
         if (crmIds.length > 0) {
           const { data: contacts } = await supabase
             .from('crm_contacts')
-            .select('id, first_name, last_name, email, phone')
+            .select('id, name, email, phone')
             .in('id', crmIds);
           (contacts || []).forEach(function(c) {
             contactMap[c.id] = c;
@@ -241,7 +241,7 @@ export default async function handler(req, res) {
             crm_contact_id: b.crm_contact_id,
             role: b.role,
             qualifying_income: b.qualifying_income,
-            name: ((c.first_name || '') + ' ' + (c.last_name || '')).trim() || 'Unknown',
+            name: c.name || 'Unknown',
             email: c.email || '',
             phone: c.phone || ''
           };
@@ -333,10 +333,10 @@ export default async function handler(req, res) {
       if (allCrmIds.length > 0) {
         const { data: contacts } = await supabase
           .from('crm_contacts')
-          .select('id, first_name, last_name')
+          .select('id, name')
           .in('id', allCrmIds);
         (contacts || []).forEach(function(c) {
-          contactMap[c.id] = ((c.first_name || '') + ' ' + (c.last_name || '')).trim() || 'Unknown';
+          contactMap[c.id] = c.name || 'Unknown';
         });
       }
 
@@ -410,10 +410,10 @@ export default async function handler(req, res) {
       if (crmIds.length > 0) {
         const { data: contacts } = await supabase
           .from('crm_contacts')
-          .select('id, first_name, last_name')
+          .select('id, name')
           .in('id', crmIds);
         (contacts || []).forEach(function(c) {
-          contactMap[c.id] = ((c.first_name || '') + ' ' + (c.last_name || '')).trim() || 'Unknown';
+          contactMap[c.id] = c.name || 'Unknown';
         });
       }
 
