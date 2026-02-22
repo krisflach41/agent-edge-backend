@@ -305,23 +305,69 @@ async function fetchAppreciation(stateCode, fredKey) {
   }
 }
 
-// ===== BUILDING PERMITS (Census) =====
-async function fetchBuildingPermits(stateFips, censusKey) {
-  // Census Building Permits Survey — annual data by state
-  try {
-    const url = `https://api.census.gov/data/2022/acs/acs5?get=B25034_002E,B25034_003E&for=state:${stateFips}&key=${censusKey}`;
-    const res = await fetchWithTimeout(url);
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (!data || data.length < 2) return null;
-    // B25034_002E = built 2020 or later, B25034_003E = built 2010-2019
-    const recent = parseInt(data[1][0]) || 0;
-    const prior = parseInt(data[1][1]) || 0;
-    return { recentBuilt: recent, priorDecade: prior, total: recent + prior };
-  } catch (e) {
-    console.error('Building permits error:', e.message);
-    return null;
+// ===== BUILDING & HOUSING (Census by ZIP) =====
+async function fetchHousingSupply(zip, censusKey) {
+  // B25034 = Year structure built (by ZCTA)
+  // B25034_002E = Built 2020 or later
+  // B25034_003E = Built 2010 to 2019
+  // B25034_004E = Built 2000 to 2009
+  // B25001_001E = Total housing units
+  // B25002_002E = Occupied
+  // B25002_003E = Vacant
+  // B23025_003E = In labor force (civilian)
+  // B23025_005E = Unemployed
+  // B08303_001E = Total commuters
+  // B08303_002E-013E = Travel time to work brackets
+  const vars = [
+    'B25034_002E','B25034_003E','B25034_004E',
+    'B25001_001E','B25002_002E','B25002_003E',
+    'B23025_003E','B23025_005E',
+    'B08303_001E'
+  ].join(',');
+
+  const years = ['2023','2022','2021'];
+  for (const year of years) {
+    try {
+      const url = `https://api.census.gov/data/${year}/acs/acs5?get=${vars}&for=zip%20code%20tabulation%20area:${zip}&key=${censusKey}`;
+      const res = await fetchWithTimeout(url, {}, 12000);
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (!data || data.length < 2) continue;
+
+      const h = data[0];
+      const v = data[1];
+      const obj = {};
+      h.forEach((k, i) => { obj[k] = parseInt(v[i]) || 0; });
+
+      const totalUnits = obj['B25001_001E'] || 0;
+      const occupied = obj['B25002_002E'] || 0;
+      const vacant = obj['B25002_003E'] || 0;
+      const builtRecent = obj['B25034_002E'] || 0; // 2020+
+      const built2010s = obj['B25034_003E'] || 0;
+      const built2000s = obj['B25034_004E'] || 0;
+      const laborForce = obj['B23025_003E'] || 0;
+      const unemployed = obj['B23025_005E'] || 0;
+      const unemploymentRate = laborForce > 0 ? Math.round((unemployed / laborForce) * 1000) / 10 : null;
+      const vacancyRate = totalUnits > 0 ? Math.round((vacant / totalUnits) * 1000) / 10 : null;
+
+      return {
+        totalUnits,
+        occupied,
+        vacant,
+        vacancyRate,
+        builtRecent,
+        built2010s,
+        built2000s,
+        laborForce,
+        unemployed,
+        unemploymentRate,
+        _year: year
+      };
+    } catch (e) {
+      console.error(`Housing supply ${year} error:`, e.message);
+    }
   }
+  return null;
 }
 
 // ===== ZIP TO STATE LOOKUP =====
@@ -373,13 +419,29 @@ export default async function handler(req, res) {
   const stateFips = STATE_FIPS[stateCode] || '39'; // default OH
 
   // Fetch all data sources in parallel
-  const [census, nationalIncome, realtor, appreciation, permits] = await Promise.all([
+  const [census, nationalIncome, realtor, appreciation, housing] = await Promise.all([
     fetchCensusData(zip, censusKey),
     fetchNationalIncome(censusKey),
     rapidApiKey ? fetchRealtorData(zip, rapidApiKey) : null,
     fetchAppreciation(stateCode, fredKey),
-    fetchBuildingPermits(stateFips, censusKey)
+    fetchHousingSupply(zip, censusKey)
   ]);
+
+  // Calculate affordability trend from HPI history + income
+  let affordabilityHistory = null;
+  if (appreciation?.history && census?.medianIncome) {
+    const currentHPI = appreciation.history[appreciation.history.length - 1]?.value;
+    const currentPrice = census.medianHomeValue || 373000;
+    const income = census.medianIncome;
+    affordabilityHistory = appreciation.history.filter((_, i) => i % 4 === 0).map(pt => {
+      const ratio = currentHPI > 0 ? pt.value / currentHPI : 1;
+      const estimatedPrice = currentPrice * ratio;
+      const monthlyPmt = (estimatedPrice * 0.8) * (0.065 / 12) / (1 - Math.pow(1 + 0.065 / 12, -360));
+      const reqIncome = (monthlyPmt * 12) / 0.28;
+      const idx = reqIncome > 0 ? Math.round((income / reqIncome) * 100) : 0;
+      return { date: pt.date, index: idx };
+    });
+  }
 
   // Build response
   const result = {
@@ -400,6 +462,7 @@ export default async function handler(req, res) {
     ownerPct: census?.ownerPct || null,
     renterPct: census?.renterPct || null,
     affordabilityIndex: census?.affordabilityIndex || null,
+    affordabilityHistory: affordabilityHistory,
     renterAffordPct: census?.renterAffordPct || null,
     demographics: census?.demographics || null,
 
@@ -418,13 +481,29 @@ export default async function handler(req, res) {
       history: appreciation.history
     } : null,
 
-    // Building Activity
-    homesBeingBuilt: permits?.recentBuilt || null,
+    // Housing Supply (zip level)
+    housingSupply: housing ? {
+      totalUnits: housing.totalUnits,
+      occupied: housing.occupied,
+      vacant: housing.vacant,
+      vacancyRate: housing.vacancyRate,
+      builtRecent: housing.builtRecent,
+      built2010s: housing.built2010s,
+      built2000s: housing.built2000s
+    } : null,
+
+    // Employment (zip level)
+    employment: housing ? {
+      laborForce: housing.laborForce,
+      unemployed: housing.unemployed,
+      unemploymentRate: housing.unemploymentRate
+    } : null,
 
     // Debug info (remove later)
     _debug: {
       censusError: census?._error || null,
-      realtorError: realtor?._error || null
+      realtorError: realtor?._error || null,
+      housingYear: housing?._year || null
     },
 
     fetchedAt: new Date().toISOString()
