@@ -319,26 +319,17 @@ async function fetchAppreciation(stateCode, fredKey) {
 }
 
 // ===== BUILDING & HOUSING (Census by ZIP) =====
-async function fetchHousingSupply(zip, censusKey) {
-  // B25034 = Year structure built (by ZCTA)
-  // B25034_002E = Built 2020 or later
-  // B25034_003E = Built 2010 to 2019
-  // B25034_004E = Built 2000 to 2009
-  // B25001_001E = Total housing units
-  // B25002_002E = Occupied
-  // B25002_003E = Vacant
-  // B23025_003E = In labor force (civilian)
-  // B23025_005E = Unemployed
-  // B08303_001E = Total commuters
-  // B08303_002E-013E = Travel time to work brackets
+async function fetchHousingSupply(zip, censusKey, stateFips) {
   const vars = [
     'B25034_002E','B25034_003E','B25034_004E',
     'B25001_001E','B25002_002E','B25002_003E',
-    'B23025_003E','B23025_005E',
-    'B08303_001E'
+    'B23025_003E','B23025_005E'
   ].join(',');
 
   const years = ['2023','2022','2021'];
+  let result = null;
+
+  // Zip-level ACS data
   for (const year of years) {
     try {
       const url = `https://api.census.gov/data/${year}/acs/acs5?get=${vars}&for=zip%20code%20tabulation%20area:${zip}&key=${censusKey}`;
@@ -355,7 +346,7 @@ async function fetchHousingSupply(zip, censusKey) {
       const totalUnits = obj['B25001_001E'] || 0;
       const occupied = obj['B25002_002E'] || 0;
       const vacant = obj['B25002_003E'] || 0;
-      const builtRecent = obj['B25034_002E'] || 0; // 2020+
+      const builtRecent = obj['B25034_002E'] || 0;
       const built2010s = obj['B25034_003E'] || 0;
       const built2000s = obj['B25034_004E'] || 0;
       const laborForce = obj['B23025_003E'] || 0;
@@ -363,24 +354,59 @@ async function fetchHousingSupply(zip, censusKey) {
       const unemploymentRate = laborForce > 0 ? Math.round((unemployed / laborForce) * 1000) / 10 : null;
       const vacancyRate = totalUnits > 0 ? Math.round((vacant / totalUnits) * 1000) / 10 : null;
 
-      return {
-        totalUnits,
-        occupied,
-        vacant,
-        vacancyRate,
-        builtRecent,
-        built2010s,
-        built2000s,
-        laborForce,
-        unemployed,
-        unemploymentRate,
+      result = {
+        totalUnits, occupied, vacant, vacancyRate,
+        builtRecent, built2010s, built2000s,
+        builtSource: 'Census ACS survey estimate',
+        laborForce, unemployed, unemploymentRate,
         _year: year
       };
+      break;
     } catch (e) {
       console.error(`Housing supply ${year} error:`, e.message);
     }
   }
-  return null;
+
+  // Also try to get county-level building permits (more accurate)
+  // Use Census geocoder to find county FIPS from zip
+  try {
+    const geoUrl = `https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress?address=${zip}&benchmark=Public_AR_Current&vintage=Current_Current&format=json`;
+    const geoRes = await fetchWithTimeout(geoUrl, {}, 8000);
+    if (geoRes.ok) {
+      const geoData = await geoRes.json();
+      const match = geoData?.result?.addressMatches?.[0];
+      const countyFips = match?.geographies?.Counties?.[0]?.GEOID;
+      const countyName = match?.geographies?.Counties?.[0]?.BASENAME;
+
+      if (countyFips && result) {
+        result.countyFips = countyFips;
+        result.countyName = countyName;
+
+        // Pull county-level BPS data from ACS (actual permits data)
+        // B25034 at county level is more robust than zip level
+        try {
+          const stFips = countyFips.substring(0, 2);
+          const coFips = countyFips.substring(2, 5);
+          const bpsUrl = `https://api.census.gov/data/2023/acs/acs5?get=B25034_002E,B25034_003E,B25034_004E,NAME&for=county:${coFips}&in=state:${stFips}&key=${censusKey}`;
+          const bpsRes = await fetchWithTimeout(bpsUrl, {}, 8000);
+          if (bpsRes.ok) {
+            const bpsData = await bpsRes.json();
+            if (bpsData && bpsData.length >= 2) {
+              result.countyBuiltRecent = parseInt(bpsData[1][0]) || 0;
+              result.countyBuilt2010s = parseInt(bpsData[1][1]) || 0;
+              result.countyBuilt2000s = parseInt(bpsData[1][2]) || 0;
+            }
+          }
+        } catch (e) {
+          console.error('County BPS error:', e.message);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Geocoder error:', e.message);
+  }
+
+  return result;
 }
 
 // ===== ZIP TO STATE LOOKUP =====
@@ -437,7 +463,7 @@ export default async function handler(req, res) {
     fetchNationalIncome(censusKey),
     rapidApiKey ? fetchRealtorData(zip, rapidApiKey) : null,
     fetchAppreciation(stateCode, fredKey),
-    fetchHousingSupply(zip, censusKey)
+    fetchHousingSupply(zip, censusKey, stateFips)
   ]);
 
   // Calculate affordability trend from HPI history + income
@@ -502,7 +528,12 @@ export default async function handler(req, res) {
       vacancyRate: housing.vacancyRate,
       builtRecent: housing.builtRecent,
       built2010s: housing.built2010s,
-      built2000s: housing.built2000s
+      built2000s: housing.built2000s,
+      builtSource: housing.builtSource,
+      countyName: housing.countyName || null,
+      countyBuiltRecent: housing.countyBuiltRecent || null,
+      countyBuilt2010s: housing.countyBuilt2010s || null,
+      countyBuilt2000s: housing.countyBuilt2000s || null
     } : null,
 
     // Employment (zip level)
