@@ -22,7 +22,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { name, email, brokerage, branding, notes, cart } = req.body;
+    const { name, email, brokerage, branding, cobrandLayout, notes, cart } = req.body;
 
     if (!name || !email || !cart) {
       return res.status(400).json({ success: false, message: 'Missing required fields' });
@@ -51,7 +51,7 @@ export default async function handler(req, res) {
         items: cart,
         item_count: itemCount,
         co_branding: coBranding,
-        co_brand_layout: null,
+        co_brand_layout: coBranding ? (cobrandLayout || 'left') : null,
         notes: notes || null,
         status: 'new',
         cart_data: cart,
