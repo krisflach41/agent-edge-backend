@@ -205,7 +205,8 @@ async function fetchRealtorData(zip, rapidApiKey) {
         offset: 0,
         postal_code: zip,
         status: ['for_sale'],
-        sort: { direction: 'desc', field: 'list_date' }
+        sort: { direction: 'desc', field: 'list_date' },
+        results: ['total', 'properties.list_price', 'properties.list_date', 'properties.description.beds', 'properties.description.baths', 'properties.description.sqft', 'properties.location.address']
       })
     }, 15000);
     
@@ -214,7 +215,12 @@ async function fetchRealtorData(zip, rapidApiKey) {
       console.error(`Realtor API ${res.status}:`, errText.substring(0, 300));
       return { _error: `Realtor API HTTP ${res.status}` };
     }
-    const data = await res.json();
+    const raw = await res.text();
+    let data;
+    try { data = JSON.parse(raw); } catch (e) {
+      console.error('Realtor parse error:', raw.substring(0, 300));
+      return { _error: 'JSON parse failed' };
+    }
     
     const totalListings = data?.data?.home_search?.total || 0;
     const properties = data?.data?.home_search?.properties || [];
@@ -223,14 +229,18 @@ async function fetchRealtorData(zip, rapidApiKey) {
     let doms = [];
     
     properties.forEach(p => {
-      if (p.list_price && p.list_price > 0) prices.push(p.list_price);
-      if (p.list_date) {
-        const dom = Math.floor((Date.now() - new Date(p.list_date).getTime()) / (1000*60*60*24));
+      // Try multiple price field paths
+      const price = p.list_price || p.price || p.description?.list_price || 0;
+      if (price && price > 0) prices.push(price);
+      
+      // Try multiple date field paths
+      const listDate = p.list_date || p.description?.list_date || null;
+      if (listDate) {
+        const dom = Math.floor((Date.now() - new Date(listDate).getTime()) / (1000*60*60*24));
         if (dom >= 0 && dom < 1000) doms.push(dom);
       }
     });
 
-    // Median calculation
     const median = arr => {
       if (arr.length === 0) return null;
       const sorted = arr.slice().sort((a, b) => a - b);
@@ -243,7 +253,10 @@ async function fetchRealtorData(zip, rapidApiKey) {
       medianListPrice: median(prices),
       medianDom: median(doms),
       newListings: doms.filter(d => d <= 5).length,
-      sampleSize: properties.length
+      sampleSize: properties.length,
+      pricesFound: prices.length,
+      domsFound: doms.length,
+      _sampleProperty: properties[0] ? JSON.stringify(properties[0]).substring(0, 500) : null
     };
   } catch (e) {
     console.error('Realtor API error:', e.message);
