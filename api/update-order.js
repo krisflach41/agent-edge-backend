@@ -22,19 +22,25 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { orderId, status } = req.body;
+    const { orderId, status, generated_items } = req.body;
 
-    if (!orderId || !status) {
-      return res.status(400).json({ success: false, message: 'Missing orderId or status' });
+    if (!orderId) {
+      return res.status(400).json({ success: false, message: 'Missing orderId' });
     }
 
-    // Update order status in Supabase
+    if (!status && generated_items === undefined) {
+      return res.status(400).json({ success: false, message: 'Nothing to update' });
+    }
+
+    // Build update object
+    const updateObj = { updated_at: new Date().toISOString() };
+    if (status) updateObj.status = status.toLowerCase();
+    if (generated_items !== undefined) updateObj.generated_items = generated_items;
+
+    // Update order in Supabase
     const { data, error } = await supabase
       .from('orders')
-      .update({ 
-        status: status.toLowerCase(),
-        updated_at: new Date().toISOString()
-      })
+      .update(updateObj)
       .eq('order_id', orderId)
       .select();
 
