@@ -44,113 +44,136 @@ async function fetchWithTimeout(url, options = {}, timeout = 10000) {
 
 // ===== CENSUS ACS DATA =====
 async function fetchCensusData(zip, censusKey) {
-  // ACS 5-Year estimates by ZCTA (zip code tabulation area)
-  // Variables:
-  // B01003_001E = total population
-  // B25003_001E = total housing units (occupied)
-  // B25003_002E = owner occupied
-  // B25003_003E = renter occupied
-  // B19013_001E = median household income
-  // B25077_001E = median home value
-  // B01001_003E-007E = males 18-34 (various age groups)
-  // B01001_027E-031E = females 18-34
-  // We'll use broader age groups from B01001
+  // Try multiple ACS years in case latest isn't available
+  const years = ['2023', '2022', '2021'];
   
-  const variables = [
+  const coreVars = [
     'B01003_001E',  // total pop
     'B25003_001E',  // total occupied housing
     'B25003_002E',  // owner occupied
     'B25003_003E',  // renter occupied
     'B19013_001E',  // median household income
     'B25077_001E',  // median home value
-    'B25064_001E',  // median gross rent
-    // Age groups (male)
-    'B01001_004E','B01001_005E','B01001_006E', // 5-17 (approx)
-    'B01001_007E','B01001_008E','B01001_009E','B01001_010E', // 18-29
-    'B01001_011E','B01001_012E','B01001_013E', // 30-39
-    'B01001_014E','B01001_015E', // 40-49
-    'B01001_016E','B01001_017E', // 50-59
-    'B01001_018E','B01001_019E','B01001_020E','B01001_021E','B01001_022E','B01001_023E','B01001_024E','B01001_025E', // 60+
-    // Age groups (female)
-    'B01001_028E','B01001_029E','B01001_030E', // 5-17 (approx)
-    'B01001_031E','B01001_032E','B01001_033E','B01001_034E', // 18-29
-    'B01001_035E','B01001_036E','B01001_037E', // 30-39
-    'B01001_038E','B01001_039E', // 40-49
-    'B01001_040E','B01001_041E', // 50-59
-    'B01001_042E','B01001_043E','B01001_044E','B01001_045E','B01001_046E','B01001_047E','B01001_048E','B01001_049E' // 60+
+    'B25064_001E'   // median gross rent
   ].join(',');
 
-  const url = `https://api.census.gov/data/2022/acs/acs5?get=${variables}&for=zip%20code%20tabulation%20area:${zip}&key=${censusKey}`;
-  
-  try {
-    const res = await fetchWithTimeout(url);
-    if (!res.ok) throw new Error(`Census API ${res.status}`);
-    const data = await res.json();
-    if (!data || data.length < 2) throw new Error('No Census data for this zip');
-    
-    const headers = data[0];
-    const values = data[1];
-    const obj = {};
-    headers.forEach((h, i) => { obj[h] = parseInt(values[i]) || 0; });
+  const ageVars = [
+    'B01001_007E','B01001_008E','B01001_009E','B01001_010E',
+    'B01001_011E','B01001_012E','B01001_013E',
+    'B01001_014E','B01001_015E',
+    'B01001_016E','B01001_017E',
+    'B01001_018E','B01001_019E','B01001_020E','B01001_021E','B01001_022E','B01001_023E','B01001_024E','B01001_025E',
+    'B01001_031E','B01001_032E','B01001_033E','B01001_034E',
+    'B01001_035E','B01001_036E','B01001_037E',
+    'B01001_038E','B01001_039E',
+    'B01001_040E','B01001_041E',
+    'B01001_042E','B01001_043E','B01001_044E','B01001_045E','B01001_046E','B01001_047E','B01001_048E','B01001_049E'
+  ].join(',');
 
-    const totalPop = obj['B01003_001E'] || 0;
-    const totalOccupied = obj['B25003_001E'] || 0;
-    const ownerOccupied = obj['B25003_002E'] || 0;
-    const renterOccupied = obj['B25003_003E'] || 0;
-    const medianIncome = obj['B19013_001E'] || 0;
-    const medianHomeValue = obj['B25077_001E'] || 0;
-    const medianRent = obj['B25064_001E'] || 0;
+  let coreData = null;
+  let ageData = null;
+  let usedYear = null;
 
-    // Age group calculations (male + female combined)
-    const age18_26 = (obj['B01001_007E']||0)+(obj['B01001_008E']||0)+(obj['B01001_009E']||0)+(obj['B01001_010E']||0)
-                   + (obj['B01001_031E']||0)+(obj['B01001_032E']||0)+(obj['B01001_033E']||0)+(obj['B01001_034E']||0);
-    const age27_35 = (obj['B01001_011E']||0)+(obj['B01001_012E']||0)
-                   + (obj['B01001_035E']||0)+(obj['B01001_036E']||0);
-    const age36_44 = (obj['B01001_013E']||0)+(obj['B01001_014E']||0)
-                   + (obj['B01001_037E']||0)+(obj['B01001_038E']||0);
-    const age45_54 = (obj['B01001_015E']||0)+(obj['B01001_016E']||0)
-                   + (obj['B01001_039E']||0)+(obj['B01001_040E']||0);
-    const age55plus = (obj['B01001_017E']||0)+(obj['B01001_018E']||0)+(obj['B01001_019E']||0)
-                    + (obj['B01001_020E']||0)+(obj['B01001_021E']||0)+(obj['B01001_022E']||0)
-                    + (obj['B01001_023E']||0)+(obj['B01001_024E']||0)+(obj['B01001_025E']||0)
-                    + (obj['B01001_041E']||0)+(obj['B01001_042E']||0)+(obj['B01001_043E']||0)
-                    + (obj['B01001_044E']||0)+(obj['B01001_045E']||0)+(obj['B01001_046E']||0)
-                    + (obj['B01001_047E']||0)+(obj['B01001_048E']||0)+(obj['B01001_049E']||0);
-
-    // Affordability index: ratio of median income to income needed for median home
-    // Income needed = (median home value * 0.8 * 0.065 / 12) * 12 / 0.28 (28% DTI, 6.5% rate approx, 80% LTV)
-    // Simplified: affordability = (median income / required income) * 100
-    const monthlyPayment = (medianHomeValue * 0.8) * (0.065 / 12) / (1 - Math.pow(1 + 0.065/12, -360));
-    const requiredIncome = (monthlyPayment * 12) / 0.28;
-    const affordabilityIndex = requiredIncome > 0 ? Math.round((medianIncome / requiredIncome) * 100) : 0;
-
-    // Renters who can afford to purchase (estimate based on income vs home price)
-    const renterAffordPct = affordabilityIndex >= 100 ? 15 : Math.max(3, Math.round(affordabilityIndex * 0.12));
-
-    return {
-      population: totalPop,
-      totalHousing: totalOccupied,
-      ownerOccupied,
-      renterOccupied,
-      ownerPct: totalOccupied > 0 ? Math.round((ownerOccupied / totalOccupied) * 100) : 0,
-      renterPct: totalOccupied > 0 ? Math.round((renterOccupied / totalOccupied) * 100) : 0,
-      medianIncome,
-      medianHomeValue,
-      medianRent,
-      affordabilityIndex,
-      renterAffordPct,
-      demographics: {
-        '18-26': age18_26,
-        '27-35': age27_35,
-        '36-44': age36_44,
-        '45-54': age45_54,
-        '55+': age55plus
+  // Try each year for core data
+  for (const year of years) {
+    try {
+      const url = `https://api.census.gov/data/${year}/acs/acs5?get=${coreVars}&for=zip%20code%20tabulation%20area:${zip}&key=${censusKey}`;
+      const res = await fetchWithTimeout(url, {}, 12000);
+      if (!res.ok) {
+        console.error(`Census ${year} core: HTTP ${res.status}`);
+        continue;
       }
-    };
-  } catch (e) {
-    console.error('Census error:', e.message);
-    return null;
+      const text = await res.text();
+      if (!text || text.includes('error')) {
+        console.error(`Census ${year} core error response:`, text.substring(0, 200));
+        continue;
+      }
+      const data = JSON.parse(text);
+      if (data && data.length >= 2) {
+        coreData = data;
+        usedYear = year;
+        break;
+      }
+    } catch (e) {
+      console.error(`Census ${year} core error:`, e.message);
+    }
   }
+
+  if (!coreData) return { _error: 'Census core data unavailable for zip ' + zip };
+
+  // Fetch age data separately (less critical)
+  try {
+    const url = `https://api.census.gov/data/${usedYear}/acs/acs5?get=${ageVars}&for=zip%20code%20tabulation%20area:${zip}&key=${censusKey}`;
+    const res = await fetchWithTimeout(url, {}, 12000);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.length >= 2) ageData = data;
+    }
+  } catch (e) {
+    console.error('Census age data error:', e.message);
+  }
+
+  // Parse core data
+  const headers = coreData[0];
+  const values = coreData[1];
+  const obj = {};
+  headers.forEach((h, i) => { obj[h] = parseInt(values[i]) || 0; });
+
+  const totalPop = obj['B01003_001E'] || 0;
+  const totalOccupied = obj['B25003_001E'] || 0;
+  const ownerOccupied = obj['B25003_002E'] || 0;
+  const renterOccupied = obj['B25003_003E'] || 0;
+  const medianIncome = obj['B19013_001E'] || 0;
+  const medianHomeValue = obj['B25077_001E'] || 0;
+  const medianRent = obj['B25064_001E'] || 0;
+
+  // Parse age data if available
+  let demographics = null;
+  if (ageData) {
+    const aHeaders = ageData[0];
+    const aValues = ageData[1];
+    const aObj = {};
+    aHeaders.forEach((h, i) => { aObj[h] = parseInt(aValues[i]) || 0; });
+
+    const age18_26 = (aObj['B01001_007E']||0)+(aObj['B01001_008E']||0)+(aObj['B01001_009E']||0)+(aObj['B01001_010E']||0)
+                   + (aObj['B01001_031E']||0)+(aObj['B01001_032E']||0)+(aObj['B01001_033E']||0)+(aObj['B01001_034E']||0);
+    const age27_35 = (aObj['B01001_011E']||0)+(aObj['B01001_012E']||0)
+                   + (aObj['B01001_035E']||0)+(aObj['B01001_036E']||0);
+    const age36_44 = (aObj['B01001_013E']||0)+(aObj['B01001_014E']||0)
+                   + (aObj['B01001_037E']||0)+(aObj['B01001_038E']||0);
+    const age45_54 = (aObj['B01001_015E']||0)+(aObj['B01001_016E']||0)
+                   + (aObj['B01001_039E']||0)+(aObj['B01001_040E']||0);
+    const age55plus = (aObj['B01001_017E']||0)+(aObj['B01001_018E']||0)+(aObj['B01001_019E']||0)
+                    + (aObj['B01001_020E']||0)+(aObj['B01001_021E']||0)+(aObj['B01001_022E']||0)
+                    + (aObj['B01001_023E']||0)+(aObj['B01001_024E']||0)+(aObj['B01001_025E']||0)
+                    + (aObj['B01001_041E']||0)+(aObj['B01001_042E']||0)+(aObj['B01001_043E']||0)
+                    + (aObj['B01001_044E']||0)+(aObj['B01001_045E']||0)+(aObj['B01001_046E']||0)
+                    + (aObj['B01001_047E']||0)+(aObj['B01001_048E']||0)+(aObj['B01001_049E']||0);
+
+    demographics = { '18-26': age18_26, '27-35': age27_35, '36-44': age36_44, '45-54': age45_54, '55+': age55plus };
+  }
+
+  // Affordability index
+  const monthlyPayment = medianHomeValue > 0 ? (medianHomeValue * 0.8) * (0.065 / 12) / (1 - Math.pow(1 + 0.065/12, -360)) : 0;
+  const requiredIncome = monthlyPayment > 0 ? (monthlyPayment * 12) / 0.28 : 0;
+  const affordabilityIndex = requiredIncome > 0 ? Math.round((medianIncome / requiredIncome) * 100) : 0;
+  const renterAffordPct = affordabilityIndex >= 100 ? 15 : Math.max(3, Math.round(affordabilityIndex * 0.12));
+
+  return {
+    _year: usedYear,
+    population: totalPop,
+    totalHousing: totalOccupied,
+    ownerOccupied,
+    renterOccupied,
+    ownerPct: totalOccupied > 0 ? Math.round((ownerOccupied / totalOccupied) * 100) : 0,
+    renterPct: totalOccupied > 0 ? Math.round((renterOccupied / totalOccupied) * 100) : 0,
+    medianIncome,
+    medianHomeValue,
+    medianRent,
+    affordabilityIndex,
+    renterAffordPct,
+    demographics
+  };
 }
 
 // ===== NATIONAL MEDIAN INCOME (for comparison) =====
@@ -168,51 +191,63 @@ async function fetchNationalIncome(censusKey) {
 
 // ===== REALTOR.COM MARKET DATA =====
 async function fetchRealtorData(zip, rapidApiKey) {
-  // Use the Realty in US API from RapidAPI
-  const url = `https://realty-in-us.p.rapidapi.com/properties/v3/list?postal_code=${zip}&status=for_sale&sort=newest&limit=0`;
-  
   try {
+    const url = `https://realty-in-us.p.rapidapi.com/properties/v3/list`;
     const res = await fetchWithTimeout(url, {
-      method: 'GET',
+      method: 'POST',
       headers: {
+        'Content-Type': 'application/json',
         'X-RapidAPI-Key': rapidApiKey,
         'X-RapidAPI-Host': 'realty-in-us.p.rapidapi.com'
-      }
+      },
+      body: JSON.stringify({
+        limit: 200,
+        offset: 0,
+        postal_code: zip,
+        status: ['for_sale'],
+        sort: { direction: 'desc', field: 'list_date' }
+      })
     }, 15000);
     
-    if (!res.ok) throw new Error(`Realtor API ${res.status}`);
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      console.error(`Realtor API ${res.status}:`, errText.substring(0, 300));
+      return { _error: `Realtor API HTTP ${res.status}` };
+    }
     const data = await res.json();
     
     const totalListings = data?.data?.home_search?.total || 0;
     const properties = data?.data?.home_search?.properties || [];
     
-    // Calculate stats from results
-    let totalPrice = 0;
-    let totalDom = 0;
-    let priceCount = 0;
-    let domCount = 0;
+    let prices = [];
+    let doms = [];
     
     properties.forEach(p => {
-      if (p.list_price) { totalPrice += p.list_price; priceCount++; }
+      if (p.list_price && p.list_price > 0) prices.push(p.list_price);
       if (p.list_date) {
         const dom = Math.floor((Date.now() - new Date(p.list_date).getTime()) / (1000*60*60*24));
-        if (dom >= 0 && dom < 1000) { totalDom += dom; domCount++; }
+        if (dom >= 0 && dom < 1000) doms.push(dom);
       }
     });
 
+    // Median calculation
+    const median = arr => {
+      if (arr.length === 0) return null;
+      const sorted = arr.slice().sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      return sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+    };
+
     return {
       activeListings: totalListings,
-      medianListPrice: priceCount > 0 ? Math.round(totalPrice / priceCount) : null,
-      medianDom: domCount > 0 ? Math.round(totalDom / domCount) : null,
-      newListings: properties.filter(p => {
-        if (!p.list_date) return false;
-        const dom = Math.floor((Date.now() - new Date(p.list_date).getTime()) / (1000*60*60*24));
-        return dom <= 5;
-      }).length
+      medianListPrice: median(prices),
+      medianDom: median(doms),
+      newListings: doms.filter(d => d <= 5).length,
+      sampleSize: properties.length
     };
   } catch (e) {
     console.error('Realtor API error:', e.message);
-    return null;
+    return { _error: e.message };
   }
 }
 
@@ -351,6 +386,7 @@ export default async function handler(req, res) {
     zip,
     state: stateCode,
     stateFips,
+    censusYear: census?._year || null,
 
     // Demographics & Housing
     population: census?.population || null,
@@ -384,6 +420,12 @@ export default async function handler(req, res) {
 
     // Building Activity
     homesBeingBuilt: permits?.recentBuilt || null,
+
+    // Debug info (remove later)
+    _debug: {
+      censusError: census?._error || null,
+      realtorError: realtor?._error || null
+    },
 
     fetchedAt: new Date().toISOString()
   };
