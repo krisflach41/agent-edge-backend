@@ -46,7 +46,8 @@ export default async function handler(req, res) {
       itemCount: order.item_count || 0,
       notes: order.notes || '',
       status: order.status || 'new',
-      cartJson: order.cart_data ? JSON.stringify(order.cart_data) : ''
+      cartJson: order.cart_data ? JSON.stringify(order.cart_data) : '',
+      generatedItems: order.generated_items || []
     }));
     
     return res.status(200).json({ success: true, orders: orders });
