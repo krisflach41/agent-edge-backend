@@ -38,7 +38,7 @@ export default async function handler(req, res) {
     if (cart.websites) itemCount += cart.websites.length;
 
     // Determine co-branding
-    const coBranding = branding && branding !== 'None' && branding.toLowerCase() !== 'no';
+    const coBranding = branding === 'Co-branded';
 
     // Insert order into Supabase
     const { data, error } = await supabase
