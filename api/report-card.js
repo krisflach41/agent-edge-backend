@@ -547,7 +547,11 @@ export default async function handler(req, res) {
     _debug: {
       censusError: census?._error || null,
       realtorError: realtor?._error || null,
-      housingYear: housing?._year || null
+      housingYear: housing?._year || null,
+      realtorPricesFound: realtor?.pricesFound || 0,
+      realtorDomsFound: realtor?.domsFound || 0,
+      realtorSample: realtor?._sampleProperty || null,
+      countyName: housing?.countyName || null
     },
 
     fetchedAt: new Date().toISOString()
