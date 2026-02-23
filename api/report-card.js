@@ -499,11 +499,28 @@ async function fetchBLSEmployment(countyFips, blsKey) {
 }
 
 // ===== HUD FAIR MARKET RENTS (by zip code, bedroom breakdown) =====
-async function fetchHUDRents(zip, hudKey) {
+async function fetchHUDRents(zip, hudKey, stateFips, countyFips) {
   if (!hudKey) return null;
 
   try {
-    const url = 'https://www.huduser.gov/hudapi/public/fmr/data/' + zip;
+    // HUD API needs entity ID format, not raw ZIP
+    // Try Small Area FMR by ZIP first (for metro areas)
+    // Format: /fmr/data/{entityid} where entityid for counties is {state}{county}99999
+    
+    // Build county entity ID from FIPS: e.g. state=39, county=061 -> 3906199999
+    let entityId = null;
+    if (countyFips && countyFips.length >= 5) {
+      entityId = countyFips + '99999';
+    } else if (stateFips && countyFips) {
+      entityId = stateFips + countyFips.slice(-3) + '99999';
+    }
+
+    if (!entityId) {
+      console.error('HUD FMR: no county FIPS available');
+      return null;
+    }
+
+    const url = 'https://www.huduser.gov/hudapi/public/fmr/data/' + entityId;
     const res = await fetchWithTimeout(url, {
       headers: { 'Authorization': 'Bearer ' + hudKey }
     }, 10000);
@@ -999,7 +1016,7 @@ export default async function handler(req, res) {
     fetchAppreciation(geoData?.stateCode || stateCode, fredKey),
     fips5 ? tryFetch('buildingPermits', () => fetchBuildingPermits(fips5)) : { _ok: true, data: null },
     (fips5 && blsKey) ? tryFetch('BLS', () => fetchBLSEmployment(fips5, blsKey)) : { _ok: true, data: null },
-    hudKey ? tryFetch('HUD_FMR', () => fetchHUDRents(zip, hudKey)) : { _ok: true, data: null },
+    hudKey ? tryFetch('HUD_FMR', () => fetchHUDRents(zip, hudKey, geoData?.stateFips || stateFips, fips5)) : { _ok: true, data: null },
     walkScoreKey ? fetchWalkScore(lat, lon, address, walkScoreKey) : null,
     tryFetch('FEMA', () => fetchFloodZone(lat, lon)),
     tryFetch('NCES', () => fetchNearbySchools(lat, lon)),
