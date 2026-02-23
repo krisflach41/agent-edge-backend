@@ -888,22 +888,34 @@ async function fetchNearbyParks(lat, lon) {
 }
 
 // ===== GEOCODIO SCHOOL DISTRICT (via fields=school) =====
-async function fetchSchoolDistrict(zip, geocodioKey) {
-  if (!geocodioKey) return null;
+async function fetchSchoolDistrict(lat, lon) {
+  if (!lat || !lon) return null;
 
   try {
-    const url = `https://api.geocod.io/v1.7/geocode?q=${zip}&api_key=${geocodioKey}&fields=school`;
-    const res = await fetchWithTimeout(url, {}, 8000);
+    // Use NCES School_Districts_Current polygon service - point-in-polygon query
+    const url = `https://services1.arcgis.com/Ua5sjt3LWTPigjyD/arcgis/rest/services/School_Districts_Current/FeatureServer/0/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=false&f=json`;
+    const res = await fetchWithTimeout(url, {}, 10000);
     if (!res.ok) return null;
     const data = await res.json();
-    const school = data?.results?.[0]?.fields?.school_districts;
-    if (!school) return null;
+    const features = data?.features || [];
+
+    let unified = null, elementary = null, secondary = null;
+    features.forEach(f => {
+      const a = f.attributes || {};
+      const name = a.NAME || a.SDLEA || '';
+      const level = (a.SDTYPE || a.ELSDLEA || a.SCSDLEA || a.UNSDLEA || '').toString();
+      // SDTYPE: 1=unified, 2=elementary, 3=secondary (or use field presence)
+      if (a.UNSDLEA || level === '1') unified = name;
+      else if (a.ELSDLEA || level === '2') elementary = name;
+      else if (a.SCSDLEA || level === '3') secondary = name;
+      else if (!unified) unified = name; // default to unified if unclear
+    });
 
     return {
-      unified: school.unified?.[0]?.name || null,
-      elementary: school.elementary?.[0]?.name || null,
-      secondary: school.secondary?.[0]?.name || null,
-      _source: 'Geocodio school district lookup'
+      unified,
+      elementary,
+      secondary,
+      _source: 'NCES School District Boundaries (ArcGIS)'
     };
   } catch (e) {
     console.error('School district error:', e.message);
@@ -1021,7 +1033,7 @@ export default async function handler(req, res) {
     tryFetch('FEMA', () => fetchFloodZone(lat, lon)),
     tryFetch('NCES', () => fetchNearbySchools(lat, lon)),
     tryFetch('Overpass', () => fetchNearbyParks(lat, lon)),
-    geocodioKey ? tryFetch('SchoolDistrict', () => fetchSchoolDistrict(zip, geocodioKey)) : { _ok: true, data: null }
+    tryFetch('SchoolDistrict', () => fetchSchoolDistrict(lat, lon))
   ]);
 
   const census = results[0];
