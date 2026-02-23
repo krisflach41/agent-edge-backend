@@ -980,20 +980,50 @@ export default async function handler(req, res) {
   const lon = geoData?.longitude;
   const address = geoData ? `${geoData.city}, ${geoData.state} ${zip}` : zip;
 
-  const [census, nationalIncome, realtor, appreciation, permits, bls, hudRents, walkScore, floodZone, nearbySchools, nearbyParks, schoolDistrict] = await Promise.all([
+  // Diagnostic wrapper to capture exact errors
+  async function tryFetch(name, fn) {
+    try {
+      const result = await fn();
+      return { _ok: true, data: result };
+    } catch (e) {
+      console.error(name + ' FAILED:', e.message);
+      return { _ok: false, _error: e.message, _name: name, data: null };
+    }
+  }
+
+  const results = await Promise.all([
     fetchCensusData(zip, censusKey),
     fetchNationalIncome(censusKey),
     rapidApiKey ? fetchRealtorData(zip, rapidApiKey) : null,
     fetchAppreciation(geoData?.stateCode || stateCode, fredKey),
-    fips5 ? fetchBuildingPermits(fips5) : null,
-    (fips5 && blsKey) ? fetchBLSEmployment(fips5, blsKey) : null,
-    hudKey ? fetchHUDRents(zip, hudKey) : null,
+    fips5 ? tryFetch('buildingPermits', () => fetchBuildingPermits(fips5)) : { _ok: true, data: null },
+    (fips5 && blsKey) ? tryFetch('BLS', () => fetchBLSEmployment(fips5, blsKey)) : { _ok: true, data: null },
+    hudKey ? tryFetch('HUD_FMR', () => fetchHUDRents(zip, hudKey)) : { _ok: true, data: null },
     walkScoreKey ? fetchWalkScore(lat, lon, address, walkScoreKey) : null,
-    fetchFloodZone(lat, lon),
-    fetchNearbySchools(lat, lon),
-    fetchNearbyParks(lat, lon),
-    geocodioKey ? fetchSchoolDistrict(zip, geocodioKey) : null
+    tryFetch('FEMA', () => fetchFloodZone(lat, lon)),
+    tryFetch('NCES', () => fetchNearbySchools(lat, lon)),
+    tryFetch('Overpass', () => fetchNearbyParks(lat, lon)),
+    geocodioKey ? tryFetch('SchoolDistrict', () => fetchSchoolDistrict(zip, geocodioKey)) : { _ok: true, data: null }
   ]);
+
+  const census = results[0];
+  const nationalIncome = results[1];
+  const realtor = results[2];
+  const appreciation = results[3];
+  const permits = results[4]?.data !== undefined ? results[4].data : results[4];
+  const bls = results[5]?.data !== undefined ? results[5].data : results[5];
+  const hudRents = results[6]?.data !== undefined ? results[6].data : results[6];
+  const walkScore = results[7];
+  const floodZone = results[8]?.data !== undefined ? results[8].data : results[8];
+  const nearbySchools = results[9]?.data !== undefined ? results[9].data : results[9];
+  const nearbyParks = results[10]?.data !== undefined ? results[10].data : results[10];
+  const schoolDistrict = results[11]?.data !== undefined ? results[11].data : results[11];
+
+  // Collect diagnostics for debugging
+  const _diagnostics = results.map((r, i) => {
+    if (r && r._ok === false) return { index: i, name: r._name, error: r._error };
+    return null;
+  }).filter(Boolean);
 
   // Calculate affordability trend
   let affordabilityHistory = null;
@@ -1132,7 +1162,8 @@ export default async function handler(req, res) {
       schoolDistrict: schoolDistrict ? 'Geocodio school district lookup' : 'Not available'
     },
 
-    fetchedAt: new Date().toISOString()
+    fetchedAt: new Date().toISOString(),
+    _diagnostics: _diagnostics.length > 0 ? _diagnostics : undefined
   };
 
   return res.status(200).json(result);
