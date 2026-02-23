@@ -51,7 +51,9 @@ export default async function handler(req, res) {
 
       case 'hud':
         label = 'HUD Fair Market Rents';
-        url = 'https://www.huduser.gov/hudapi/public/fmr/data/' + (zip || '45202');
+        // HUD needs county entity ID: countyFIPS + 99999
+        const hudFips = fips || '39061';
+        url = 'https://www.huduser.gov/hudapi/public/fmr/data/' + hudFips + '99999';
         options = {
           headers: { 'Authorization': 'Bearer ' + (process.env.HUD_API_KEY || '') }
         };
