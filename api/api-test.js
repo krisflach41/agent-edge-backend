@@ -24,7 +24,7 @@ export default async function handler(req, res) {
 
       case 'nces':
         label = 'NCES Schools (ArcGIS Online)';
-        url = `https://services1.arcgis.com/Ua5sjt3LWTPigjyD/arcgis/rest/services/School_Characteristics_Current/FeatureServer/0/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&distance=8047&units=esriSRUnit_Meter&outFields=NAME,CITY,STATE&returnGeometry=false&resultRecordCount=5&f=json`;
+        url = `https://services1.arcgis.com/Ua5sjt3LWTPigjyD/arcgis/rest/services/School_Characteristics_Current/FeatureServer/0/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&distance=8047&units=esriSRUnit_Meter&outFields=*&returnGeometry=true&resultRecordCount=3&f=json`;
         break;
 
       case 'nces2':
