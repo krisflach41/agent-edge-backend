@@ -738,12 +738,12 @@ function processSchoolData(data, originLat, originLon) {
   const schools = features.map(f => {
     const a = f.attributes || {};
     // Try attributes first, then geometry for lat/lon
-    const sLat = a.LAT || a.LATITUDE || a.lat || (f.geometry?.y) || 0;
-    const sLon = a.LON || a.LONGITUDE || a.lon || (f.geometry?.x) || 0;
+    const sLat = a.LAT || a.LATITUDE || a.LATCOD || a.lat || (f.geometry?.y) || 0;
+    const sLon = a.LON || a.LONGITUDE || a.LONCOD || a.lon || (f.geometry?.x) || 0;
     const dist = haversine(originLat, originLon, sLat, sLon);
-    const enrollment = a.ENROLLMENT || a.TOTAL || a.MEMBER || 0;
-    const teachers = a.FT_TEACHER || a.TEACHERS || 0;
-    const ratio = (enrollment > 0 && teachers > 0) ? Math.round(enrollment / teachers) : null;
+    const enrollment = a.ENROLLMENT || a.MEMBER || a.TOTAL || 0;
+    const teachers = a.FT_TEACHER || a.FTE || a.TEACHERS || 0;
+    const ratio = a.STUTERATIO || ((enrollment > 0 && teachers > 0) ? Math.round(enrollment / teachers) : null);
     const name = a.NAME || a.SCH_NAME || a.SCHNAM || 'Unknown';
 
     return {
@@ -753,10 +753,12 @@ function processSchoolData(data, originLat, originLon) {
       state: a.STATE || a.LSTATE || '',
       zip: a.ZIP || a.LZIP || '',
       grades: gradeLabel(a.GSLO || a.G_LO_GR, a.GSHI || a.G_HI_GR),
-      level: levelLabel(a.LEVEL_ || a.LEVEL || a.SCH_TYPE),
+      level: levelLabel(a.LEVEL_ || a.LEVEL || a.SCH_TYPE || a.SCHOOL_LEVEL),
       enrollment,
       teachers: Math.round(teachers),
-      studentTeacherRatio: ratio,
+      studentTeacherRatio: ratio ? Math.round(ratio * 10) / 10 : null,
+      district: a.LEA_NAME || null,
+      charter: a.CHARTER_TEXT === 'Yes',
       distance: Math.round(dist * 10) / 10,
       lat: sLat,
       lon: sLon
