@@ -1,6 +1,6 @@
-// /api/report-card.js - Real Estate Report Card data aggregator
-// Pulls from: Census ACS, Realtor.com (RapidAPI), FRED/FHFA
-// Deploy to Vercel. Env vars: CENSUS_API_KEY, RAPIDAPI_KEY, FRED_API_KEY
+// /api/report-card.js - Neighborhood Blueprint data aggregator
+// Data Sources: Census ACS, FRED/FHFA, Realtor.com (RapidAPI), Geocodio, BLS, HUD FMR
+// Env vars: CENSUS_API_KEY, RAPIDAPI_KEY, FRED_API_KEY, GEOCODIO_API_KEY, BLS_API_KEY, HUD_API_KEY
 
 const FRED_BASE = 'https://api.stlouisfed.org/fred/series/observations';
 
@@ -42,11 +42,45 @@ async function fetchWithTimeout(url, options = {}, timeout = 10000) {
   }
 }
 
+// ===== GEOCODIO: Zip to City, County, State, FIPS, Lat/Lon =====
+async function fetchGeoData(zip, geocodioKey) {
+  try {
+    const url = `https://api.geocod.io/v1.7/geocode?q=${zip}&api_key=${geocodioKey}&fields=census2020`;
+    const res = await fetchWithTimeout(url, {}, 8000);
+    if (!res.ok) {
+      console.error('Geocodio HTTP ' + res.status);
+      return null;
+    }
+    const data = await res.json();
+    const result = data?.results?.[0];
+    if (!result) return null;
+
+    const comp = result.address_components || {};
+    const loc = result.location || {};
+    const census = result.fields?.census2020 || {};
+
+    return {
+      city: comp.city || '',
+      county: comp.county || '',
+      state: comp.state || '',
+      stateCode: comp.state || '',
+      latitude: loc.lat || null,
+      longitude: loc.lng || null,
+      countyFips: census.county_fips || null,
+      stateFips: census.state_fips || null,
+      fullFips: census.full_fips || null,
+      source: 'Geocodio'
+    };
+  } catch (e) {
+    console.error('Geocodio error:', e.message);
+    return null;
+  }
+}
+
 // ===== CENSUS ACS DATA =====
 async function fetchCensusData(zip, censusKey) {
-  // Try multiple ACS years in case latest isn't available
   const years = ['2023', '2022', '2021'];
-  
+
   const coreVars = [
     'B01003_001E',  // total pop
     'B25003_001E',  // total occupied housing
@@ -54,7 +88,10 @@ async function fetchCensusData(zip, censusKey) {
     'B25003_003E',  // renter occupied
     'B19013_001E',  // median household income
     'B25077_001E',  // median home value
-    'B25064_001E'   // median gross rent
+    'B25064_001E',  // median gross rent
+    'B25001_001E',  // total housing units
+    'B25002_002E',  // occupied
+    'B25002_003E'   // vacant
   ].join(',');
 
   const ageVars = [
@@ -74,20 +111,13 @@ async function fetchCensusData(zip, censusKey) {
   let ageData = null;
   let usedYear = null;
 
-  // Try each year for core data
   for (const year of years) {
     try {
       const url = `https://api.census.gov/data/${year}/acs/acs5?get=${coreVars}&for=zip%20code%20tabulation%20area:${zip}&key=${censusKey}`;
       const res = await fetchWithTimeout(url, {}, 12000);
-      if (!res.ok) {
-        console.error(`Census ${year} core: HTTP ${res.status}`);
-        continue;
-      }
+      if (!res.ok) continue;
       const text = await res.text();
-      if (!text || text.includes('error')) {
-        console.error(`Census ${year} core error response:`, text.substring(0, 200));
-        continue;
-      }
+      if (!text || text.includes('error')) continue;
       const data = JSON.parse(text);
       if (data && data.length >= 2) {
         coreData = data;
@@ -95,13 +125,12 @@ async function fetchCensusData(zip, censusKey) {
         break;
       }
     } catch (e) {
-      console.error(`Census ${year} core error:`, e.message);
+      console.error('Census ' + year + ' error:', e.message);
     }
   }
 
-  if (!coreData) return { _error: 'Census core data unavailable for zip ' + zip };
+  if (!coreData) return { _error: 'Census data unavailable for zip ' + zip };
 
-  // Fetch age data separately (less critical)
   try {
     const url = `https://api.census.gov/data/${usedYear}/acs/acs5?get=${ageVars}&for=zip%20code%20tabulation%20area:${zip}&key=${censusKey}`;
     const res = await fetchWithTimeout(url, {}, 12000);
@@ -110,10 +139,9 @@ async function fetchCensusData(zip, censusKey) {
       if (data && data.length >= 2) ageData = data;
     }
   } catch (e) {
-    console.error('Census age data error:', e.message);
+    console.error('Census age error:', e.message);
   }
 
-  // Parse core data
   const headers = coreData[0];
   const values = coreData[1];
   const obj = {};
@@ -126,14 +154,17 @@ async function fetchCensusData(zip, censusKey) {
   const medianIncome = obj['B19013_001E'] || 0;
   const medianHomeValue = obj['B25077_001E'] || 0;
   const medianRent = obj['B25064_001E'] || 0;
+  const totalUnits = obj['B25001_001E'] || 0;
+  const occupied = obj['B25002_002E'] || 0;
+  const vacant = obj['B25002_003E'] || 0;
+  const vacancyRate = totalUnits > 0 ? Math.round((vacant / totalUnits) * 1000) / 10 : null;
 
-  // Parse age data if available
   let demographics = null;
   if (ageData) {
-    const aHeaders = ageData[0];
-    const aValues = ageData[1];
+    const aH = ageData[0];
+    const aV = ageData[1];
     const aObj = {};
-    aHeaders.forEach((h, i) => { aObj[h] = parseInt(aValues[i]) || 0; });
+    aH.forEach((h, i) => { aObj[h] = parseInt(aV[i]) || 0; });
 
     const age18_26 = (aObj['B01001_007E']||0)+(aObj['B01001_008E']||0)+(aObj['B01001_009E']||0)+(aObj['B01001_010E']||0)
                    + (aObj['B01001_031E']||0)+(aObj['B01001_032E']||0)+(aObj['B01001_033E']||0)+(aObj['B01001_034E']||0);
@@ -153,7 +184,6 @@ async function fetchCensusData(zip, censusKey) {
     demographics = { '18-26': age18_26, '27-35': age27_35, '36-44': age36_44, '45-54': age45_54, '55+': age55plus };
   }
 
-  // Affordability index
   const monthlyPayment = medianHomeValue > 0 ? (medianHomeValue * 0.8) * (0.065 / 12) / (1 - Math.pow(1 + 0.065/12, -360)) : 0;
   const requiredIncome = monthlyPayment > 0 ? (monthlyPayment * 12) / 0.28 : 0;
   const affordabilityIndex = requiredIncome > 0 ? Math.round((medianIncome / requiredIncome) * 100) : 0;
@@ -163,6 +193,10 @@ async function fetchCensusData(zip, censusKey) {
     _year: usedYear,
     population: totalPop,
     totalHousing: totalOccupied,
+    totalUnits,
+    occupied,
+    vacant,
+    vacancyRate,
     ownerOccupied,
     renterOccupied,
     ownerPct: totalOccupied > 0 ? Math.round((ownerOccupied / totalOccupied) * 100) : 0,
@@ -176,23 +210,23 @@ async function fetchCensusData(zip, censusKey) {
   };
 }
 
-// ===== NATIONAL MEDIAN INCOME (for comparison) =====
+// ===== NATIONAL MEDIAN INCOME =====
 async function fetchNationalIncome(censusKey) {
   const url = `https://api.census.gov/data/2022/acs/acs5?get=B19013_001E&for=us:1&key=${censusKey}`;
   try {
     const res = await fetchWithTimeout(url);
-    if (!res.ok) return 80610; // fallback
+    if (!res.ok) return 80610;
     const data = await res.json();
     return parseInt(data[1][0]) || 80610;
   } catch (e) {
-    return 80610; // fallback national median
+    return 80610;
   }
 }
 
-// ===== REALTOR.COM MARKET DATA =====
+// ===== REALTOR.COM MARKET DATA (fixed DOM) =====
 async function fetchRealtorData(zip, rapidApiKey) {
   try {
-    const url = `https://realty-in-us.p.rapidapi.com/properties/v3/list`;
+    const url = 'https://realty-in-us.p.rapidapi.com/properties/v3/list';
     const res = await fetchWithTimeout(url, {
       method: 'POST',
       headers: {
@@ -206,38 +240,51 @@ async function fetchRealtorData(zip, rapidApiKey) {
         postal_code: zip,
         status: ['for_sale'],
         sort: { direction: 'desc', field: 'list_date' },
-        results: ['total', 'properties.list_price', 'properties.list_date', 'properties.description.beds', 'properties.description.baths', 'properties.description.sqft', 'properties.location.address']
+        results: [
+          'total',
+          'properties.list_price',
+          'properties.list_date',
+          'properties.days_on_market',
+          'properties.description.beds',
+          'properties.description.baths',
+          'properties.description.sqft',
+          'properties.description.days_on_market',
+          'properties.location.address'
+        ]
       })
     }, 15000);
-    
+
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
-      console.error(`Realtor API ${res.status}:`, errText.substring(0, 300));
-      return { _error: `Realtor API HTTP ${res.status}` };
+      console.error('Realtor API ' + res.status + ':', errText.substring(0, 300));
+      return { _error: 'Realtor API HTTP ' + res.status };
     }
     const raw = await res.text();
     let data;
     try { data = JSON.parse(raw); } catch (e) {
-      console.error('Realtor parse error:', raw.substring(0, 300));
       return { _error: 'JSON parse failed' };
     }
-    
+
     const totalListings = data?.data?.home_search?.total || 0;
     const properties = data?.data?.home_search?.properties || [];
-    
+
     let prices = [];
     let doms = [];
-    
+
     properties.forEach(p => {
-      // Try multiple price field paths
       const price = p.list_price || p.price || p.description?.list_price || 0;
       if (price && price > 0) prices.push(price);
-      
-      // Try multiple date field paths
-      const listDate = p.list_date || p.description?.list_date || null;
-      if (listDate) {
-        const dom = Math.floor((Date.now() - new Date(listDate).getTime()) / (1000*60*60*24));
-        if (dom >= 0 && dom < 1000) doms.push(dom);
+
+      // Try actual DOM field first, then calculate from list_date
+      const domValue = p.days_on_market || p.description?.days_on_market || null;
+      if (domValue != null && domValue >= 0 && domValue < 1000) {
+        doms.push(domValue);
+      } else {
+        const listDate = p.list_date || p.description?.list_date || null;
+        if (listDate) {
+          const dom = Math.floor((Date.now() - new Date(listDate).getTime()) / (1000*60*60*24));
+          if (dom >= 0 && dom < 1000) doms.push(dom);
+        }
       }
     });
 
@@ -252,11 +299,12 @@ async function fetchRealtorData(zip, rapidApiKey) {
       activeListings: totalListings,
       medianListPrice: median(prices),
       medianDom: median(doms),
+      avgDom: doms.length > 0 ? Math.round(doms.reduce((a, b) => a + b, 0) / doms.length) : null,
       newListings: doms.filter(d => d <= 5).length,
       sampleSize: properties.length,
       pricesFound: prices.length,
       domsFound: doms.length,
-      _sampleProperty: properties[0] ? JSON.stringify(properties[0]).substring(0, 500) : null
+      _source: 'Realtor.com via RapidAPI'
     };
   } catch (e) {
     console.error('Realtor API error:', e.message);
@@ -270,15 +318,13 @@ async function fetchAppreciation(stateCode, fredKey) {
   if (!seriesId) return null;
 
   try {
-    // Get enough history for 10yr calculation
-    const url = `${FRED_BASE}?series_id=${seriesId}&api_key=${fredKey}&file_type=json&sort_order=desc&observation_start=2010-01-01`;
+    const url = FRED_BASE + '?series_id=' + seriesId + '&api_key=' + fredKey + '&file_type=json&sort_order=desc&observation_start=2010-01-01';
     const res = await fetchWithTimeout(url);
-    if (!res.ok) throw new Error(`FRED ${res.status}`);
+    if (!res.ok) throw new Error('FRED ' + res.status);
     const data = await res.json();
     const obs = data.observations || [];
     if (obs.length < 2) return null;
 
-    // Calculate annualized appreciation rates
     const latest = parseFloat(obs[0].value);
     const calcRate = (quartersBack) => {
       if (obs.length <= quartersBack) return null;
@@ -288,16 +334,10 @@ async function fetchAppreciation(stateCode, fredKey) {
       return Math.round((Math.pow(latest / prev, 1 / years) - 1) * 10000) / 100;
     };
 
-    // 5-year forecast based on historical trend
-    const rate5yr = calcRate(20); // 5 years of quarters
-    const rate10yr = calcRate(40); // 10 years
-    const rate1yr = calcRate(4); // 1 year
-
-    // Build 5-year forecast using average of 5yr and 1yr rates
+    const rate5yr = calcRate(20);
+    const rate10yr = calcRate(40);
+    const rate1yr = calcRate(4);
     const forecastRate = rate5yr || rate1yr || 3.5;
-    const forecast = [];
-    // We don't have the actual home price for this zip, so we return rates
-    // The frontend will apply them to the median home value
 
     return {
       oneYear: rate1yr,
@@ -306,11 +346,11 @@ async function fetchAppreciation(stateCode, fredKey) {
       forecastAnnualRate: Math.round(forecastRate * 100) / 100,
       latestHPI: latest,
       latestDate: obs[0].date,
-      // Return quarterly history for chart
       history: obs.slice(0, 40).map(o => ({
         date: o.date,
         value: parseFloat(o.value)
-      })).reverse()
+      })).reverse(),
+      _source: 'FHFA House Price Index via FRED (state-level, quarterly)'
     };
   } catch (e) {
     console.error('FHFA error:', e.message);
@@ -318,101 +358,201 @@ async function fetchAppreciation(stateCode, fredKey) {
   }
 }
 
-// ===== BUILDING & HOUSING (Census by ZIP) =====
-async function fetchHousingSupply(zip, censusKey, stateFips) {
-  const vars = [
-    'B25034_002E','B25034_003E','B25034_004E',
-    'B25001_001E','B25002_002E','B25002_003E',
-    'B23025_003E','B23025_005E'
-  ].join(',');
+// ===== HUD SOCDS BUILDING PERMITS (actual permits, not survey estimates) =====
+async function fetchBuildingPermits(countyFips) {
+  if (!countyFips) return null;
 
-  const years = ['2023','2022','2021'];
-  let result = null;
-
-  // Zip-level ACS data
-  for (const year of years) {
-    try {
-      const url = `https://api.census.gov/data/${year}/acs/acs5?get=${vars}&for=zip%20code%20tabulation%20area:${zip}&key=${censusKey}`;
-      const res = await fetchWithTimeout(url, {}, 12000);
-      if (!res.ok) continue;
-      const data = await res.json();
-      if (!data || data.length < 2) continue;
-
-      const h = data[0];
-      const v = data[1];
-      const obj = {};
-      h.forEach((k, i) => { obj[k] = parseInt(v[i]) || 0; });
-
-      const totalUnits = obj['B25001_001E'] || 0;
-      const occupied = obj['B25002_002E'] || 0;
-      const vacant = obj['B25002_003E'] || 0;
-      const builtRecent = obj['B25034_002E'] || 0;
-      const built2010s = obj['B25034_003E'] || 0;
-      const built2000s = obj['B25034_004E'] || 0;
-      const laborForce = obj['B23025_003E'] || 0;
-      const unemployed = obj['B23025_005E'] || 0;
-      const unemploymentRate = laborForce > 0 ? Math.round((unemployed / laborForce) * 1000) / 10 : null;
-      const vacancyRate = totalUnits > 0 ? Math.round((vacant / totalUnits) * 1000) / 10 : null;
-
-      result = {
-        totalUnits, occupied, vacant, vacancyRate,
-        builtRecent, built2010s, built2000s,
-        builtSource: 'Census ACS survey estimate',
-        laborForce, unemployed, unemploymentRate,
-        _year: year
-      };
-      break;
-    } catch (e) {
-      console.error(`Housing supply ${year} error:`, e.message);
-    }
-  }
-
-  // Also try to get county-level building permits (more accurate)
-  // Use Census geocoder to find county FIPS from zip
   try {
-    const geoUrl = `https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress?address=${zip}&benchmark=Public_AR_Current&vintage=Current_Current&format=json`;
-    const geoRes = await fetchWithTimeout(geoUrl, {}, 8000);
-    if (geoRes.ok) {
-      const geoData = await geoRes.json();
-      const match = geoData?.result?.addressMatches?.[0];
-      const countyFips = match?.geographies?.Counties?.[0]?.GEOID;
-      const countyName = match?.geographies?.Counties?.[0]?.BASENAME;
-
-      if (countyFips && result) {
-        result.countyFips = countyFips;
-        result.countyName = countyName;
-
-        // Pull county-level BPS data from ACS (actual permits data)
-        // B25034 at county level is more robust than zip level
-        try {
-          const stFips = countyFips.substring(0, 2);
-          const coFips = countyFips.substring(2, 5);
-          const bpsUrl = `https://api.census.gov/data/2023/acs/acs5?get=B25034_002E,B25034_003E,B25034_004E,NAME&for=county:${coFips}&in=state:${stFips}&key=${censusKey}`;
-          const bpsRes = await fetchWithTimeout(bpsUrl, {}, 8000);
-          if (bpsRes.ok) {
-            const bpsData = await bpsRes.json();
-            if (bpsData && bpsData.length >= 2) {
-              result.countyBuiltRecent = parseInt(bpsData[1][0]) || 0;
-              result.countyBuilt2010s = parseInt(bpsData[1][1]) || 0;
-              result.countyBuilt2000s = parseInt(bpsData[1][2]) || 0;
-            }
-          }
-        } catch (e) {
-          console.error('County BPS error:', e.message);
-        }
-      }
+    // Query the HUD ArcGIS feature service for building permits by county
+    const url = 'https://services.arcgis.com/VTyQ9soqVukalItT/arcgis/rest/services/Residential_Construction_Permits_by_County/FeatureServer/0/query?where=cnty%3D%27' + countyFips + '%27&outFields=*&orderByFields=year+DESC&resultRecordCount=10&f=json';
+    const res = await fetchWithTimeout(url, {}, 10000);
+    if (!res.ok) {
+      console.error('HUD permits HTTP ' + res.status);
+      return null;
     }
-  } catch (e) {
-    console.error('Geocoder error:', e.message);
-  }
+    const data = await res.json();
+    const features = data?.features || [];
 
-  return result;
+    if (features.length === 0) {
+      // Try alternate field name
+      const url2 = 'https://services.arcgis.com/VTyQ9soqVukalItT/arcgis/rest/services/Residential_Construction_Permits_by_County/FeatureServer/0/query?where=fips%3D%27' + countyFips + '%27&outFields=*&orderByFields=year+DESC&resultRecordCount=10&f=json';
+      const res2 = await fetchWithTimeout(url2, {}, 10000);
+      if (res2.ok) {
+        const data2 = await res2.json();
+        if (data2?.features?.length > 0) return processPermitData(data2.features);
+      }
+      return null;
+    }
+
+    return processPermitData(features);
+  } catch (e) {
+    console.error('HUD permits error:', e.message);
+    return null;
+  }
+}
+
+function processPermitData(features) {
+  const years = {};
+  features.forEach(f => {
+    const a = f.attributes || f;
+    const yr = a.year || a.Year || a.YEAR;
+    if (yr) {
+      years[yr] = {
+        year: yr,
+        singleFamily: a.units_1unit || a['1_unit_units'] || 0,
+        total: a.total_units || a.totalunits || 0
+      };
+    }
+  });
+
+  const sorted = Object.values(years).sort((a, b) => b.year - a.year);
+
+  let since2020 = 0, period2010s = 0, period2000s = 0;
+  sorted.forEach(y => {
+    if (y.year >= 2020) since2020 += y.total;
+    else if (y.year >= 2010) period2010s += y.total;
+    else if (y.year >= 2000) period2000s += y.total;
+  });
+
+  return {
+    since2020,
+    period2010s,
+    period2000s,
+    annualData: sorted.slice(0, 5),
+    latestYear: sorted[0]?.year || null,
+    latestTotal: sorted[0]?.total || 0,
+    _source: 'Census Bureau Building Permits Survey via HUD SOCDS (actual permits issued)'
+  };
+}
+
+// ===== BLS EMPLOYMENT DATA (monthly, county-level) =====
+async function fetchBLSEmployment(countyFips, blsKey) {
+  if (!countyFips || !blsKey) return null;
+
+  try {
+    const fips5 = countyFips.padStart(5, '0');
+    const rateId = 'LAUCN' + fips5 + '0000000003';
+    const unemployedId = 'LAUCN' + fips5 + '0000000004';
+    const laborForceId = 'LAUCN' + fips5 + '0000000006';
+
+    const currentYear = new Date().getFullYear();
+    const startYear = currentYear - 2;
+
+    const payload = {
+      seriesid: [rateId, unemployedId, laborForceId],
+      startyear: String(startYear),
+      endyear: String(currentYear),
+      registrationkey: blsKey
+    };
+
+    const res = await fetchWithTimeout('https://api.bls.gov/publicAPI/v2/timeseries/data/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }, 12000);
+
+    if (!res.ok) {
+      console.error('BLS HTTP ' + res.status);
+      return null;
+    }
+
+    const data = await res.json();
+    if (data.status !== 'REQUEST_SUCCEEDED') {
+      console.error('BLS status:', data.status, data.message);
+      return null;
+    }
+
+    const series = data.Results?.series || [];
+    let rate = null, unemployed = null, laborForce = null;
+    let monthlyTrend = [];
+
+    series.forEach(s => {
+      const latest = s.data?.[0];
+      if (!latest) return;
+
+      if (s.seriesID === rateId) {
+        rate = parseFloat(latest.value);
+        monthlyTrend = s.data.slice(0, 12).map(d => ({
+          year: d.year,
+          month: d.periodName,
+          rate: parseFloat(d.value)
+        })).reverse();
+      }
+      if (s.seriesID === unemployedId) unemployed = parseInt(latest.value);
+      if (s.seriesID === laborForceId) laborForce = parseInt(latest.value);
+    });
+
+    return {
+      unemploymentRate: rate,
+      unemployed,
+      laborForce,
+      monthlyTrend,
+      latestMonth: series[0]?.data?.[0]?.periodName || null,
+      latestYear: series[0]?.data?.[0]?.year || null,
+      _source: 'Bureau of Labor Statistics LAUS (county-level, monthly)'
+    };
+  } catch (e) {
+    console.error('BLS error:', e.message);
+    return null;
+  }
+}
+
+// ===== HUD FAIR MARKET RENTS (by zip code, bedroom breakdown) =====
+async function fetchHUDRents(zip, hudKey) {
+  if (!hudKey) return null;
+
+  try {
+    const url = 'https://www.huduser.gov/hudapi/public/fmr/data/' + zip;
+    const res = await fetchWithTimeout(url, {
+      headers: { 'Authorization': 'Bearer ' + hudKey }
+    }, 10000);
+
+    if (!res.ok) {
+      console.error('HUD FMR HTTP ' + res.status);
+      return null;
+    }
+
+    const data = await res.json();
+    const fmrData = data?.data;
+    if (!fmrData) return null;
+
+    const basicdata = fmrData.basicdata;
+    let zipRents = null;
+    let msaRents = null;
+
+    if (Array.isArray(basicdata)) {
+      basicdata.forEach(row => {
+        if (row.zip_code === zip) zipRents = row;
+        if (row.zip_code === 'MSA level') msaRents = row;
+      });
+    } else if (basicdata) {
+      msaRents = basicdata;
+    }
+
+    const rents = zipRents || msaRents || basicdata;
+    if (!rents) return null;
+
+    return {
+      efficiency: parseFloat(rents['Efficiency']) || null,
+      oneBed: parseFloat(rents['One-Bedroom']) || null,
+      twoBed: parseFloat(rents['Two-Bedroom']) || null,
+      threeBed: parseFloat(rents['Three-Bedroom']) || null,
+      fourBed: parseFloat(rents['Four-Bedroom']) || null,
+      metroName: fmrData.metro_name || null,
+      areaName: fmrData.area_name || null,
+      year: fmrData.year || rents.year || null,
+      isZipLevel: !!zipRents,
+      _source: 'HUD Fair Market Rents (annual, ' + (zipRents ? 'zip-level' : 'metro-level') + ')'
+    };
+  } catch (e) {
+    console.error('HUD FMR error:', e.message);
+    return null;
+  }
 }
 
 // ===== ZIP TO STATE LOOKUP =====
 function zipToState(zip) {
   const z = parseInt(zip);
-  // Common zip prefix ranges to state mapping
   const ranges = [
     [0,599,'CT'],[600,699,'CT'],[700,999,'MA'],[1000,2799,'MA'],[2800,2999,'RI'],
     [3000,3899,'NH'],[3900,4999,'ME'],[5000,5999,'VT'],[6000,6999,'CT'],
@@ -432,7 +572,7 @@ function zipToState(zip) {
   for (const [lo, hi, st] of ranges) {
     if (z >= lo && z <= hi) return st;
   }
-  return 'OH'; // fallback
+  return 'OH';
 }
 
 // ===== MAIN HANDLER =====
@@ -450,23 +590,38 @@ export default async function handler(req, res) {
   const censusKey = process.env.CENSUS_API_KEY;
   const rapidApiKey = process.env.RAPIDAPI_KEY;
   const fredKey = process.env.FRED_API_KEY;
+  const geocodioKey = process.env.GEOCODIO_API_KEY;
+  const blsKey = process.env.BLS_API_KEY;
+  const hudKey = process.env.HUD_API_KEY;
 
   if (!censusKey) return res.status(500).json({ error: 'CENSUS_API_KEY not configured' });
   if (!fredKey) return res.status(500).json({ error: 'FRED_API_KEY not configured' });
 
   const stateCode = zipToState(zip);
-  const stateFips = STATE_FIPS[stateCode] || '39'; // default OH
 
-  // Fetch all data sources in parallel
-  const [census, nationalIncome, realtor, appreciation, housing] = await Promise.all([
+  // Phase 1: Get location data from Geocodio (needed for county FIPS)
+  const geoData = geocodioKey ? await fetchGeoData(zip, geocodioKey) : null;
+
+  // Build 5-digit county FIPS
+  let fips5 = null;
+  if (geoData?.fullFips) {
+    fips5 = geoData.fullFips.substring(0, 5);
+  } else if (geoData?.stateFips && geoData?.countyFips) {
+    fips5 = (geoData.stateFips + geoData.countyFips).substring(0, 5);
+  }
+
+  // Phase 2: Fetch all data sources in parallel
+  const [census, nationalIncome, realtor, appreciation, permits, bls, hudRents] = await Promise.all([
     fetchCensusData(zip, censusKey),
     fetchNationalIncome(censusKey),
     rapidApiKey ? fetchRealtorData(zip, rapidApiKey) : null,
-    fetchAppreciation(stateCode, fredKey),
-    fetchHousingSupply(zip, censusKey, stateFips)
+    fetchAppreciation(geoData?.stateCode || stateCode, fredKey),
+    fips5 ? fetchBuildingPermits(fips5) : null,
+    (fips5 && blsKey) ? fetchBLSEmployment(fips5, blsKey) : null,
+    hudKey ? fetchHUDRents(zip, hudKey) : null
   ]);
 
-  // Calculate affordability trend from HPI history + income
+  // Calculate affordability trend
   let affordabilityHistory = null;
   if (appreciation?.history && census?.medianIncome) {
     const currentHPI = appreciation.history[appreciation.history.length - 1]?.value;
@@ -485,11 +640,23 @@ export default async function handler(req, res) {
   // Build response
   const result = {
     zip,
-    state: stateCode,
-    stateFips,
+    state: geoData?.stateCode || stateCode,
+    stateFips: geoData?.stateFips || STATE_FIPS[stateCode] || '39',
+
+    // Location (from Geocodio)
+    location: geoData ? {
+      city: geoData.city,
+      county: geoData.county,
+      state: geoData.state,
+      latitude: geoData.latitude,
+      longitude: geoData.longitude,
+      countyFips: fips5,
+      _source: geoData.source
+    } : null,
+
     censusYear: census?._year || null,
 
-    // Demographics & Housing
+    // Demographics & Housing (Census ACS)
     population: census?.population || null,
     medianIncome: census?.medianIncome || null,
     nationalMedianIncome: nationalIncome,
@@ -505,53 +672,78 @@ export default async function handler(req, res) {
     renterAffordPct: census?.renterAffordPct || null,
     demographics: census?.demographics || null,
 
+    // Housing Supply (Census ACS for units/vacancy)
+    housingSupply: {
+      totalUnits: census?.totalUnits || null,
+      occupied: census?.occupied || null,
+      vacant: census?.vacant || null,
+      vacancyRate: census?.vacancyRate || null,
+      _source: 'Census ACS (zip-level housing units)'
+    },
+
+    // Building Permits (HUD SOCDS - actual permits issued)
+    buildingPermits: permits ? {
+      since2020: permits.since2020,
+      period2010s: permits.period2010s,
+      period2000s: permits.period2000s,
+      latestYear: permits.latestYear,
+      latestTotal: permits.latestTotal,
+      annualData: permits.annualData,
+      countyName: geoData?.county || null,
+      _source: permits._source
+    } : null,
+
     // Market Data (Realtor.com)
     activeListings: realtor?.activeListings || null,
     medianListPrice: realtor?.medianListPrice || null,
     medianDom: realtor?.medianDom || null,
+    avgDom: realtor?.avgDom || null,
     newListings: realtor?.newListings || null,
 
-    // Appreciation (FHFA)
+    // Appreciation (FHFA via FRED)
     appreciation: appreciation ? {
       oneYear: appreciation.oneYear,
       fiveYear: appreciation.fiveYear,
       tenYear: appreciation.tenYear,
       forecastAnnualRate: appreciation.forecastAnnualRate,
-      history: appreciation.history
+      history: appreciation.history,
+      _source: appreciation._source
     } : null,
 
-    // Housing Supply (zip level)
-    housingSupply: housing ? {
-      totalUnits: housing.totalUnits,
-      occupied: housing.occupied,
-      vacant: housing.vacant,
-      vacancyRate: housing.vacancyRate,
-      builtRecent: housing.builtRecent,
-      built2010s: housing.built2010s,
-      built2000s: housing.built2000s,
-      builtSource: housing.builtSource,
-      countyName: housing.countyName || null,
-      countyBuiltRecent: housing.countyBuiltRecent || null,
-      countyBuilt2010s: housing.countyBuilt2010s || null,
-      countyBuilt2000s: housing.countyBuilt2000s || null
+    // Employment (BLS LAUS - county-level, monthly)
+    employment: bls ? {
+      laborForce: bls.laborForce,
+      unemployed: bls.unemployed,
+      unemploymentRate: bls.unemploymentRate,
+      monthlyTrend: bls.monthlyTrend,
+      latestMonth: bls.latestMonth,
+      latestYear: bls.latestYear,
+      countyName: geoData?.county || null,
+      _source: bls._source
     } : null,
 
-    // Employment (zip level)
-    employment: housing ? {
-      laborForce: housing.laborForce,
-      unemployed: housing.unemployed,
-      unemploymentRate: housing.unemploymentRate
+    // HUD Fair Market Rents (by bedroom count)
+    fairMarketRents: hudRents ? {
+      efficiency: hudRents.efficiency,
+      oneBed: hudRents.oneBed,
+      twoBed: hudRents.twoBed,
+      threeBed: hudRents.threeBed,
+      fourBed: hudRents.fourBed,
+      metroName: hudRents.metroName,
+      year: hudRents.year,
+      isZipLevel: hudRents.isZipLevel,
+      _source: hudRents._source
     } : null,
 
-    // Debug info (remove later)
-    _debug: {
-      censusError: census?._error || null,
-      realtorError: realtor?._error || null,
-      housingYear: housing?._year || null,
-      realtorPricesFound: realtor?.pricesFound || 0,
-      realtorDomsFound: realtor?.domsFound || 0,
-      realtorSample: realtor?._sampleProperty || null,
-      countyName: housing?.countyName || null
+    // Data Source Documentation
+    dataSources: {
+      demographics: 'U.S. Census Bureau ACS 5-Year Estimates (' + (census?._year || '2023') + ')',
+      appreciation: 'Federal Housing Finance Agency HPI via FRED (state-level, quarterly)',
+      listings: 'Realtor.com via RapidAPI (live data)',
+      permits: permits ? 'Census Bureau Building Permits Survey via HUD SOCDS (actual permits issued, county-level)' : 'Not available',
+      employment: bls ? 'Bureau of Labor Statistics LAUS (county-level, monthly)' : 'Census ACS (annual estimate)',
+      rents: hudRents ? 'HUD Fair Market Rents (' + (hudRents.year || 'current') + ')' : 'Census ACS median rent',
+      geocoding: geoData ? 'Geocodio' : 'Census zip-to-state lookup'
     },
 
     fetchedAt: new Date().toISOString()
