@@ -1,6 +1,7 @@
 // /api/report-card.js - Neighborhood Blueprint data aggregator
-// Data Sources: Census ACS, FRED/FHFA, Realtor.com (RapidAPI), Geocodio, BLS, HUD FMR
-// Env vars: CENSUS_API_KEY, RAPIDAPI_KEY, FRED_API_KEY, GEOCODIO_API_KEY, BLS_API_KEY, HUD_API_KEY
+// Data Sources: Census ACS, FRED/FHFA, Realtor.com (RapidAPI), Geocodio, BLS, HUD FMR,
+//               Walk Score, FEMA NFHL, NCES CCD Schools, OpenStreetMap Parks
+// Env vars: CENSUS_API_KEY, RAPIDAPI_KEY, FRED_API_KEY, GEOCODIO_API_KEY, BLS_API_KEY, HUD_API_KEY, WALKSCORE_API_KEY
 
 const FRED_BASE = 'https://api.stlouisfed.org/fred/series/observations';
 
@@ -550,6 +551,319 @@ async function fetchHUDRents(zip, hudKey) {
   }
 }
 
+// ===== WALK SCORE API =====
+async function fetchWalkScore(lat, lon, address, walkScoreKey) {
+  if (!walkScoreKey || !lat || !lon) return null;
+
+  try {
+    const encoded = encodeURIComponent(address || `${lat},${lon}`);
+    const url = `https://api.walkscore.com/score?format=json&address=${encoded}&lat=${lat}&lon=${lon}&transit=1&bike=1&wsapikey=${walkScoreKey}`;
+    const res = await fetchWithTimeout(url, {}, 8000);
+    if (!res.ok) {
+      console.error('Walk Score HTTP ' + res.status);
+      return null;
+    }
+    const data = await res.json();
+    if (data.status !== 1) {
+      console.error('Walk Score status:', data.status, data.description);
+      return null;
+    }
+
+    const describeWalk = (s) => {
+      if (s >= 90) return "Walker's Paradise";
+      if (s >= 70) return 'Very Walkable';
+      if (s >= 50) return 'Somewhat Walkable';
+      if (s >= 25) return 'Car-Dependent';
+      return 'Almost All Errands Require a Car';
+    };
+    const describeTransit = (s) => {
+      if (s >= 90) return 'World-Class Transit';
+      if (s >= 70) return 'Excellent Transit';
+      if (s >= 50) return 'Good Transit';
+      if (s >= 25) return 'Some Transit';
+      return 'Minimal Transit';
+    };
+    const describeBike = (s) => {
+      if (s >= 90) return "Biker's Paradise";
+      if (s >= 70) return 'Very Bikeable';
+      if (s >= 50) return 'Bikeable';
+      return 'Somewhat Bikeable';
+    };
+
+    return {
+      walkScore: data.walkscore || null,
+      walkDescription: data.walkscore != null ? describeWalk(data.walkscore) : null,
+      transitScore: data.transit?.score || null,
+      transitDescription: data.transit?.score != null ? describeTransit(data.transit.score) : null,
+      bikeScore: data.bike?.score || null,
+      bikeDescription: data.bike?.score != null ? describeBike(data.bike.score) : null,
+      _source: 'Walk Score API'
+    };
+  } catch (e) {
+    console.error('Walk Score error:', e.message);
+    return null;
+  }
+}
+
+// ===== FEMA FLOOD ZONE =====
+async function fetchFloodZone(lat, lon) {
+  if (!lat || !lon) return null;
+
+  try {
+    const url = `https://hazards.fema.gov/gis/nfhl/rest/services/public/NFHL/MapServer/28/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=FLD_ZONE,ZONE_SUBTY,SFHA_TF&returnGeometry=false&f=json`;
+    const res = await fetchWithTimeout(url, {}, 10000);
+    if (!res.ok) {
+      console.error('FEMA HTTP ' + res.status);
+      return null;
+    }
+    const data = await res.json();
+    const features = data?.features || [];
+
+    if (features.length === 0) {
+      return { zone: 'X', riskLevel: 'Minimal', description: 'Minimal flood risk — outside the 100-year and 500-year floodplains.', requiresInsurance: false, _source: 'FEMA National Flood Hazard Layer' };
+    }
+
+    const attr = features[0].attributes || {};
+    const zone = attr.FLD_ZONE || 'Unknown';
+    const sfha = attr.SFHA_TF === 'T';
+
+    const zoneDescriptions = {
+      'A': { riskLevel: 'High', description: 'High-risk flood area within the 100-year floodplain. Flood insurance is federally required for mortgages.', requiresInsurance: true },
+      'AE': { riskLevel: 'High', description: 'High-risk flood area with established base flood elevations. Flood insurance is federally required.', requiresInsurance: true },
+      'AH': { riskLevel: 'High', description: 'High-risk area with shallow flooding (1–3 feet). Flood insurance is federally required.', requiresInsurance: true },
+      'AO': { riskLevel: 'High', description: 'High-risk area with sheet flow flooding. Flood insurance is federally required.', requiresInsurance: true },
+      'V': { riskLevel: 'Very High', description: 'Coastal high-risk area with wave action. Flood insurance is federally required.', requiresInsurance: true },
+      'VE': { riskLevel: 'Very High', description: 'Coastal high-risk area with established base flood elevations and wave action. Flood insurance is federally required.', requiresInsurance: true },
+      'X': { riskLevel: 'Minimal', description: 'Minimal flood risk — outside the 100-year and 500-year floodplains. Flood insurance is not federally required but recommended.', requiresInsurance: false },
+      'D': { riskLevel: 'Undetermined', description: 'Flood risk undetermined — no flood hazard analysis has been conducted in this area.', requiresInsurance: false }
+    };
+
+    const zoneBase = zone.replace(/[0-9]/g, '').trim();
+    const info = zoneDescriptions[zoneBase] || zoneDescriptions[zone] || { riskLevel: sfha ? 'High' : 'Moderate', description: `Flood zone ${zone}. ${sfha ? 'Flood insurance is federally required.' : 'Flood insurance is recommended but not required.'}`, requiresInsurance: sfha };
+
+    return {
+      zone,
+      riskLevel: info.riskLevel,
+      description: info.description,
+      requiresInsurance: info.requiresInsurance,
+      _source: 'FEMA National Flood Hazard Layer'
+    };
+  } catch (e) {
+    console.error('FEMA flood error:', e.message);
+    return null;
+  }
+}
+
+// ===== NCES CCD NEARBY SCHOOLS (ArcGIS, free, no key) =====
+async function fetchNearbySchools(lat, lon) {
+  if (!lat || !lon) return null;
+
+  try {
+    // Query NCES public school locations within ~5 miles (8047 meters)
+    const url = `https://nces.ed.gov/opengis/rest/services/K12_School_Locations/EDGE_GEOCODE_PUBLICSCH_2223/MapServer/0/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&distance=8047&units=esriSRUnit_Meter&outFields=NAME,STREET,CITY,STATE,ZIP,GSLO,GSHI,LEVEL_,ENROLLMENT,FT_TEACHER,LAT,LON&returnGeometry=false&orderByFields=ENROLLMENT+DESC&resultRecordCount=15&f=json`;
+    const res = await fetchWithTimeout(url, {}, 12000);
+    if (!res.ok) {
+      console.error('NCES HTTP ' + res.status);
+      // Try alternate service year
+      const url2 = `https://nces.ed.gov/opengis/rest/services/K12_School_Locations/EDGE_GEOCODE_PUBLICSCH_2122/MapServer/0/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&distance=8047&units=esriSRUnit_Meter&outFields=NAME,STREET,CITY,STATE,ZIP,GSLO,GSHI,LEVEL_,ENROLLMENT,FT_TEACHER,LAT,LON&returnGeometry=false&orderByFields=ENROLLMENT+DESC&resultRecordCount=15&f=json`;
+      const res2 = await fetchWithTimeout(url2, {}, 12000);
+      if (!res2.ok) return null;
+      const data2 = await res2.json();
+      return processSchoolData(data2, lat, lon);
+    }
+    const data = await res.json();
+    return processSchoolData(data, lat, lon);
+  } catch (e) {
+    console.error('NCES schools error:', e.message);
+    return null;
+  }
+}
+
+function processSchoolData(data, originLat, originLon) {
+  const features = data?.features || [];
+  if (features.length === 0) return null;
+
+  // Calculate distance using haversine
+  function haversine(lat1, lon1, lat2, lon2) {
+    const R = 3959; // miles
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  const gradeLabel = (lo, hi) => {
+    if (!lo && !hi) return '';
+    const l = (lo || 'PK').toString().toUpperCase();
+    const h = (hi || '12').toString().toUpperCase();
+    return `Grades ${l}–${h}`;
+  };
+
+  const levelLabel = (level) => {
+    if (!level) return 'Public';
+    const l = level.toString().toUpperCase();
+    if (l.includes('ELEM') || l === '1') return 'Elementary';
+    if (l.includes('MIDDLE') || l === '2') return 'Middle';
+    if (l.includes('HIGH') || l === '3') return 'High School';
+    if (l.includes('OTHER') || l === '4') return 'Other';
+    return 'Public';
+  };
+
+  const schools = features.map(f => {
+    const a = f.attributes || {};
+    const sLat = a.LAT || 0;
+    const sLon = a.LON || 0;
+    const dist = haversine(originLat, originLon, sLat, sLon);
+    const enrollment = a.ENROLLMENT || 0;
+    const teachers = a.FT_TEACHER || 0;
+    const ratio = (enrollment > 0 && teachers > 0) ? Math.round(enrollment / teachers) : null;
+
+    return {
+      name: a.NAME || 'Unknown',
+      address: a.STREET || '',
+      city: a.CITY || '',
+      state: a.STATE || '',
+      zip: a.ZIP || '',
+      grades: gradeLabel(a.GSLO, a.GSHI),
+      level: levelLabel(a.LEVEL_),
+      enrollment,
+      teachers: Math.round(teachers),
+      studentTeacherRatio: ratio,
+      distance: Math.round(dist * 10) / 10,
+      lat: sLat,
+      lon: sLon
+    };
+  });
+
+  // Sort by distance, take closest 8
+  schools.sort((a, b) => a.distance - b.distance);
+  const closest = schools.slice(0, 8);
+
+  // Try to pick a mix: closest elementary, middle, high
+  const picked = [];
+  const byLevel = { Elementary: [], 'Middle': [], 'High School': [] };
+  closest.forEach(s => {
+    if (byLevel[s.level]) byLevel[s.level].push(s);
+  });
+
+  // Pick 1-2 from each level, sorted by distance
+  ['Elementary', 'Middle', 'High School'].forEach(lvl => {
+    const available = byLevel[lvl] || [];
+    available.slice(0, 2).forEach(s => {
+      if (picked.length < 6 && !picked.find(p => p.name === s.name)) picked.push(s);
+    });
+  });
+
+  // Fill remaining with closest overall
+  closest.forEach(s => {
+    if (picked.length < 6 && !picked.find(p => p.name === s.name)) picked.push(s);
+  });
+
+  picked.sort((a, b) => a.distance - b.distance);
+
+  return {
+    schools: picked,
+    totalFound: features.length,
+    searchRadiusMiles: 5,
+    _source: 'NCES Common Core of Data (public schools, ArcGIS)'
+  };
+}
+
+// ===== OPENSTREETMAP PARKS & DOG PARKS (Overpass API, free, no key) =====
+async function fetchNearbyParks(lat, lon) {
+  if (!lat || !lon) return null;
+
+  try {
+    // Overpass QL: find parks and dog parks within 5km
+    const query = `[out:json][timeout:15];(node["leisure"="park"](around:5000,${lat},${lon});way["leisure"="park"](around:5000,${lat},${lon});node["leisure"="dog_park"](around:5000,${lat},${lon});way["leisure"="dog_park"](around:5000,${lat},${lon}););out center tags;`;
+    const url = 'https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(query);
+    const res = await fetchWithTimeout(url, {}, 15000);
+    if (!res.ok) {
+      console.error('Overpass HTTP ' + res.status);
+      return null;
+    }
+    const data = await res.json();
+    const elements = data?.elements || [];
+
+    if (elements.length === 0) return { parks: [], dogParks: [], _source: 'OpenStreetMap Overpass API' };
+
+    function haversine(lat1, lon1, lat2, lon2) {
+      const R = 3959;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    const seen = new Set();
+    const parks = [];
+    const dogParks = [];
+
+    elements.forEach(el => {
+      const tags = el.tags || {};
+      const name = tags.name || tags['name:en'] || null;
+      if (!name) return; // skip unnamed
+      if (seen.has(name.toLowerCase())) return;
+      seen.add(name.toLowerCase());
+
+      const eLat = el.lat || el.center?.lat || 0;
+      const eLon = el.lon || el.center?.lon || 0;
+      if (!eLat || !eLon) return;
+
+      const dist = haversine(lat, lon, eLat, eLon);
+      const isDogPark = tags.leisure === 'dog_park' || (tags.dog === 'yes') || name.toLowerCase().includes('dog');
+
+      const entry = {
+        name,
+        distance: Math.round(dist * 10) / 10,
+        isDogPark,
+        lat: eLat,
+        lon: eLon
+      };
+
+      if (isDogPark) dogParks.push(entry);
+      else parks.push(entry);
+    });
+
+    parks.sort((a, b) => a.distance - b.distance);
+    dogParks.sort((a, b) => a.distance - b.distance);
+
+    return {
+      parks: parks.slice(0, 5),
+      dogParks: dogParks.slice(0, 3),
+      totalFound: parks.length + dogParks.length,
+      _source: 'OpenStreetMap Overpass API'
+    };
+  } catch (e) {
+    console.error('Overpass parks error:', e.message);
+    return null;
+  }
+}
+
+// ===== GEOCODIO SCHOOL DISTRICT (via fields=school) =====
+async function fetchSchoolDistrict(zip, geocodioKey) {
+  if (!geocodioKey) return null;
+
+  try {
+    const url = `https://api.geocod.io/v1.7/geocode?q=${zip}&api_key=${geocodioKey}&fields=school`;
+    const res = await fetchWithTimeout(url, {}, 8000);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const school = data?.results?.[0]?.fields?.school_districts;
+    if (!school) return null;
+
+    return {
+      unified: school.unified?.[0]?.name || null,
+      elementary: school.elementary?.[0]?.name || null,
+      secondary: school.secondary?.[0]?.name || null,
+      _source: 'Geocodio school district lookup'
+    };
+  } catch (e) {
+    console.error('School district error:', e.message);
+    return null;
+  }
+}
+
 // ===== ZIP TO STATE LOOKUP =====
 function zipToState(zip) {
   const z = parseInt(zip);
@@ -593,6 +907,7 @@ export default async function handler(req, res) {
   const geocodioKey = process.env.GEOCODIO_API_KEY;
   const blsKey = process.env.BLS_API_KEY;
   const hudKey = process.env.HUD_API_KEY;
+  const walkScoreKey = process.env.WALKSCORE_API_KEY;
 
   if (!censusKey) return res.status(500).json({ error: 'CENSUS_API_KEY not configured' });
   if (!fredKey) return res.status(500).json({ error: 'FRED_API_KEY not configured' });
@@ -619,6 +934,19 @@ export default async function handler(req, res) {
     fips5 ? fetchBuildingPermits(fips5) : null,
     (fips5 && blsKey) ? fetchBLSEmployment(fips5, blsKey) : null,
     hudKey ? fetchHUDRents(zip, hudKey) : null
+  ]);
+
+  // Phase 3: "Around This Home" data (needs lat/lon from Geocodio)
+  const lat = geoData?.latitude;
+  const lon = geoData?.longitude;
+  const address = geoData ? `${geoData.city}, ${geoData.state} ${zip}` : zip;
+
+  const [walkScore, floodZone, nearbySchools, nearbyParks, schoolDistrict] = await Promise.all([
+    walkScoreKey ? fetchWalkScore(lat, lon, address, walkScoreKey) : null,
+    fetchFloodZone(lat, lon),
+    fetchNearbySchools(lat, lon),
+    fetchNearbyParks(lat, lon),
+    geocodioKey ? fetchSchoolDistrict(zip, geocodioKey) : null
   ]);
 
   // Calculate affordability trend
@@ -735,6 +1063,13 @@ export default async function handler(req, res) {
       _source: hudRents._source
     } : null,
 
+    // ===== AROUND THIS HOME =====
+    walkScore: walkScore || null,
+    floodZone: floodZone || null,
+    nearbySchools: nearbySchools || null,
+    nearbyParks: nearbyParks || null,
+    schoolDistrict: schoolDistrict || null,
+
     // Data Source Documentation
     dataSources: {
       demographics: 'U.S. Census Bureau ACS 5-Year Estimates (' + (census?._year || '2023') + ')',
@@ -743,7 +1078,12 @@ export default async function handler(req, res) {
       permits: permits ? 'Census Bureau Building Permits Survey via HUD SOCDS (actual permits issued, county-level)' : 'Not available',
       employment: bls ? 'Bureau of Labor Statistics LAUS (county-level, monthly)' : 'Census ACS (annual estimate)',
       rents: hudRents ? 'HUD Fair Market Rents (' + (hudRents.year || 'current') + ')' : 'Census ACS median rent',
-      geocoding: geoData ? 'Geocodio' : 'Census zip-to-state lookup'
+      geocoding: geoData ? 'Geocodio' : 'Census zip-to-state lookup',
+      walkability: walkScore ? 'Walk Score API' : 'Not available',
+      floodZone: floodZone ? 'FEMA National Flood Hazard Layer' : 'Not available',
+      schools: nearbySchools ? 'NCES Common Core of Data (public schools)' : 'Not available',
+      parks: nearbyParks ? 'OpenStreetMap Overpass API' : 'Not available',
+      schoolDistrict: schoolDistrict ? 'Geocodio school district lookup' : 'Not available'
     },
 
     fetchedAt: new Date().toISOString()
