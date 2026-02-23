@@ -667,10 +667,9 @@ async function fetchFloodZone(lat, lon) {
 async function fetchNearbySchools(lat, lon) {
   if (!lat || !lon) return null;
 
-  const fields = 'NAME,STREET,CITY,STATE,ZIP,GSLO,GSHI,LEVEL_,ENROLLMENT,FT_TEACHER,LAT,LON,NMCNTY';
   const baseParams = `geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326` +
     `&spatialRel=esriSpatialRelIntersects&distance=8047&units=esriSRUnit_Meter` +
-    `&outFields=${fields}&returnGeometry=true&resultRecordCount=20&f=json`;
+    `&outFields=*&returnGeometry=true&resultRecordCount=20&f=json`;
 
   // Try endpoints in order of reliability
   const endpoints = [
