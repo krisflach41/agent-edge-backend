@@ -609,97 +609,98 @@ async function fetchWalkScore(lat, lon, address, walkScoreKey) {
 async function fetchFloodZone(lat, lon) {
   if (!lat || !lon) return null;
 
-  try {
-    const url = `https://hazards.fema.gov/gis/nfhl/rest/services/public/NFHL/MapServer/28/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=FLD_ZONE,ZONE_SUBTY,SFHA_TF&returnGeometry=false&f=json`;
-    const res = await fetchWithTimeout(url, {}, 10000);
-    if (!res.ok) {
-      console.error('FEMA HTTP ' + res.status);
-      return null;
+  const zoneDescriptions = {
+    'A': { riskLevel: 'High', description: 'High-risk flood area within the 100-year floodplain. Flood insurance is federally required for mortgages.', requiresInsurance: true },
+    'AE': { riskLevel: 'High', description: 'High-risk flood area with established base flood elevations. Flood insurance is federally required.', requiresInsurance: true },
+    'AH': { riskLevel: 'High', description: 'High-risk area with shallow flooding (1–3 feet). Flood insurance is federally required.', requiresInsurance: true },
+    'AO': { riskLevel: 'High', description: 'High-risk area with sheet flow flooding. Flood insurance is federally required.', requiresInsurance: true },
+    'V': { riskLevel: 'Very High', description: 'Coastal high-risk area with wave action. Flood insurance is federally required.', requiresInsurance: true },
+    'VE': { riskLevel: 'Very High', description: 'Coastal high-risk area with established base flood elevations and wave action. Flood insurance is federally required.', requiresInsurance: true },
+    'X': { riskLevel: 'Minimal', description: 'Minimal flood risk — outside the 100-year and 500-year floodplains. Flood insurance is not federally required but recommended.', requiresInsurance: false },
+    'D': { riskLevel: 'Undetermined', description: 'Flood risk undetermined — no flood hazard analysis has been conducted in this area.', requiresInsurance: false }
+  };
+
+  // Try multiple FEMA layers (28 = flood hazard zones, 14 = alternate)
+  const layers = [28, 14];
+  for (const layer of layers) {
+    try {
+      const url = `https://hazards.fema.gov/gis/nfhl/rest/services/public/NFHL/MapServer/${layer}/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=FLD_ZONE,ZONE_SUBTY,SFHA_TF&returnGeometry=false&f=json`;
+      const res = await fetchWithTimeout(url, {}, 12000);
+      if (!res.ok) {
+        console.error('FEMA layer ' + layer + ' HTTP ' + res.status);
+        continue;
+      }
+      const data = await res.json();
+      if (data?.error) {
+        console.error('FEMA error:', JSON.stringify(data.error).substring(0, 200));
+        continue;
+      }
+      const features = data?.features || [];
+
+      if (features.length === 0) {
+        // No features = likely Zone X (minimal risk) — but only trust this if the API actually responded
+        return { zone: 'X', riskLevel: 'Minimal', description: 'Minimal flood risk — outside the 100-year and 500-year floodplains. Flood insurance is not federally required but recommended.', requiresInsurance: false, _source: 'FEMA National Flood Hazard Layer' };
+      }
+
+      const attr = features[0].attributes || {};
+      const zone = attr.FLD_ZONE || 'Unknown';
+      const sfha = attr.SFHA_TF === 'T';
+      const zoneBase = zone.replace(/[0-9]/g, '').trim();
+      const info = zoneDescriptions[zoneBase] || zoneDescriptions[zone] || { riskLevel: sfha ? 'High' : 'Moderate', description: `Flood zone ${zone}. ${sfha ? 'Flood insurance is federally required.' : 'Flood insurance is recommended but not required.'}`, requiresInsurance: sfha };
+
+      return {
+        zone,
+        riskLevel: info.riskLevel,
+        description: info.description,
+        requiresInsurance: info.requiresInsurance,
+        _source: 'FEMA National Flood Hazard Layer'
+      };
+    } catch (e) {
+      console.error('FEMA layer ' + layer + ' error:', e.message);
     }
-    const data = await res.json();
-    const features = data?.features || [];
-
-    if (features.length === 0) {
-      return { zone: 'X', riskLevel: 'Minimal', description: 'Minimal flood risk — outside the 100-year and 500-year floodplains.', requiresInsurance: false, _source: 'FEMA National Flood Hazard Layer' };
-    }
-
-    const attr = features[0].attributes || {};
-    const zone = attr.FLD_ZONE || 'Unknown';
-    const sfha = attr.SFHA_TF === 'T';
-
-    const zoneDescriptions = {
-      'A': { riskLevel: 'High', description: 'High-risk flood area within the 100-year floodplain. Flood insurance is federally required for mortgages.', requiresInsurance: true },
-      'AE': { riskLevel: 'High', description: 'High-risk flood area with established base flood elevations. Flood insurance is federally required.', requiresInsurance: true },
-      'AH': { riskLevel: 'High', description: 'High-risk area with shallow flooding (1–3 feet). Flood insurance is federally required.', requiresInsurance: true },
-      'AO': { riskLevel: 'High', description: 'High-risk area with sheet flow flooding. Flood insurance is federally required.', requiresInsurance: true },
-      'V': { riskLevel: 'Very High', description: 'Coastal high-risk area with wave action. Flood insurance is federally required.', requiresInsurance: true },
-      'VE': { riskLevel: 'Very High', description: 'Coastal high-risk area with established base flood elevations and wave action. Flood insurance is federally required.', requiresInsurance: true },
-      'X': { riskLevel: 'Minimal', description: 'Minimal flood risk — outside the 100-year and 500-year floodplains. Flood insurance is not federally required but recommended.', requiresInsurance: false },
-      'D': { riskLevel: 'Undetermined', description: 'Flood risk undetermined — no flood hazard analysis has been conducted in this area.', requiresInsurance: false }
-    };
-
-    const zoneBase = zone.replace(/[0-9]/g, '').trim();
-    const info = zoneDescriptions[zoneBase] || zoneDescriptions[zone] || { riskLevel: sfha ? 'High' : 'Moderate', description: `Flood zone ${zone}. ${sfha ? 'Flood insurance is federally required.' : 'Flood insurance is recommended but not required.'}`, requiresInsurance: sfha };
-
-    return {
-      zone,
-      riskLevel: info.riskLevel,
-      description: info.description,
-      requiresInsurance: info.requiresInsurance,
-      _source: 'FEMA National Flood Hazard Layer'
-    };
-  } catch (e) {
-    console.error('FEMA flood error:', e.message);
-    return null;
   }
+
+  return null;
 }
 
 // ===== NCES CCD NEARBY SCHOOLS (ArcGIS, free, no key) =====
 async function fetchNearbySchools(lat, lon) {
   if (!lat || !lon) return null;
 
-  // Try multiple service year endpoints
-  const serviceYears = ['2223', '2122', '2021'];
-  const fields = 'NAME,STREET,CITY,STATE,ZIP,GSLO,GSHI,LEVEL_,ENROLLMENT,FT_TEACHER,LAT,LON';
+  const fields = 'NAME,STREET,CITY,STATE,ZIP,GSLO,GSHI,LEVEL_,ENROLLMENT,FT_TEACHER,LAT,LON,NMCNTY';
+  const baseParams = `geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326` +
+    `&spatialRel=esriSpatialRelIntersects&distance=8047&units=esriSRUnit_Meter` +
+    `&outFields=${fields}&returnGeometry=true&resultRecordCount=20&f=json`;
 
-  for (const yr of serviceYears) {
+  // Try endpoints in order of reliability
+  const endpoints = [
+    // ArcGIS Online hosted (most reliable for serverless)
+    `https://services1.arcgis.com/Ua5sjt3LWTPigjyD/arcgis/rest/services/Public_School_Location_Current/FeatureServer/0/query?${baseParams}`,
+    `https://services1.arcgis.com/Ua5sjt3LWTPigjyD/arcgis/rest/services/Public_School_Location_201819/FeatureServer/0/query?${baseParams}`,
+    // NCES MapServer
+    `https://nces.ed.gov/opengis/rest/services/K12_School_Locations/EDGE_GEOCODE_PUBLICSCH_2223/MapServer/0/query?${baseParams}`,
+    `https://nces.ed.gov/opengis/rest/services/K12_School_Locations/EDGE_GEOCODE_PUBLICSCH_2122/MapServer/0/query?${baseParams}`
+  ];
+
+  for (const url of endpoints) {
     try {
-      // Use geometryType point with distance buffer
-      const url = `https://nces.ed.gov/opengis/rest/services/K12_School_Locations/EDGE_GEOCODE_PUBLICSCH_${yr}/MapServer/0/query?` +
-        `geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326` +
-        `&spatialRel=esriSpatialRelIntersects&distance=8047&units=esriSRUnit_Meter` +
-        `&outFields=${fields}&returnGeometry=true&resultRecordCount=20&f=json`;
       const res = await fetchWithTimeout(url, {}, 15000);
       if (!res.ok) {
-        console.error('NCES ' + yr + ' HTTP ' + res.status);
+        console.error('NCES endpoint ' + res.status + ': ' + url.substring(0, 80));
         continue;
       }
       const data = await res.json();
+      if (data?.error) {
+        console.error('NCES ArcGIS error:', JSON.stringify(data.error).substring(0, 200));
+        continue;
+      }
       if (data?.features?.length > 0) {
-        console.log('NCES schools found via ' + yr + ': ' + data.features.length);
+        console.log('NCES schools found: ' + data.features.length + ' from ' + url.substring(0, 60));
         return processSchoolData(data, lat, lon);
       }
     } catch (e) {
-      console.error('NCES ' + yr + ' error:', e.message);
+      console.error('NCES endpoint error:', e.message);
     }
-  }
-
-  // Final fallback: try the "current" endpoint
-  try {
-    const url = `https://services1.arcgis.com/Ua5sjt3LWTPigjyD/arcgis/rest/services/Public_School_Location_Current/FeatureServer/0/query?` +
-      `geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326` +
-      `&spatialRel=esriSpatialRelIntersects&distance=8047&units=esriSRUnit_Meter` +
-      `&outFields=*&returnGeometry=true&resultRecordCount=20&f=json`;
-    const res = await fetchWithTimeout(url, {}, 15000);
-    if (res.ok) {
-      const data = await res.json();
-      if (data?.features?.length > 0) {
-        console.log('NCES current endpoint found: ' + data.features.length);
-        return processSchoolData(data, lat, lon);
-      }
-    }
-  } catch (e) {
-    console.error('NCES current fallback error:', e.message);
   }
 
   return null;
