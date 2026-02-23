@@ -624,7 +624,7 @@ async function fetchFloodZone(lat, lon) {
   const layers = [28, 14];
   for (const layer of layers) {
     try {
-      const url = `https://hazards.fema.gov/gis/nfhl/rest/services/public/NFHL/MapServer/${layer}/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=FLD_ZONE,ZONE_SUBTY,SFHA_TF&returnGeometry=false&f=json`;
+      const url = `https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/${layer}/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=FLD_ZONE,ZONE_SUBTY,SFHA_TF&returnGeometry=false&f=json`;
       const res = await fetchWithTimeout(url, {}, 12000);
       if (!res.ok) {
         console.error('FEMA layer ' + layer + ' HTTP ' + res.status);
@@ -674,8 +674,8 @@ async function fetchNearbySchools(lat, lon) {
 
   // Try endpoints in order of reliability
   const endpoints = [
-    // ArcGIS Online hosted (most reliable for serverless)
-    `https://services1.arcgis.com/Ua5sjt3LWTPigjyD/arcgis/rest/services/Public_School_Location_Current/FeatureServer/0/query?${baseParams}`,
+    // ArcGIS Online hosted — correct service names
+    `https://services1.arcgis.com/Ua5sjt3LWTPigjyD/arcgis/rest/services/School_Characteristics_Current/FeatureServer/0/query?${baseParams}`,
     `https://services1.arcgis.com/Ua5sjt3LWTPigjyD/arcgis/rest/services/Public_School_Location_201819/FeatureServer/0/query?${baseParams}`,
     // NCES MapServer
     `https://nces.ed.gov/opengis/rest/services/K12_School_Locations/EDGE_GEOCODE_PUBLICSCH_2223/MapServer/0/query?${baseParams}`,
