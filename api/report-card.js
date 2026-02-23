@@ -658,25 +658,51 @@ async function fetchFloodZone(lat, lon) {
 async function fetchNearbySchools(lat, lon) {
   if (!lat || !lon) return null;
 
-  try {
-    // Query NCES public school locations within ~5 miles (8047 meters)
-    const url = `https://nces.ed.gov/opengis/rest/services/K12_School_Locations/EDGE_GEOCODE_PUBLICSCH_2223/MapServer/0/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&distance=8047&units=esriSRUnit_Meter&outFields=NAME,STREET,CITY,STATE,ZIP,GSLO,GSHI,LEVEL_,ENROLLMENT,FT_TEACHER,LAT,LON&returnGeometry=false&orderByFields=ENROLLMENT+DESC&resultRecordCount=15&f=json`;
-    const res = await fetchWithTimeout(url, {}, 12000);
-    if (!res.ok) {
-      console.error('NCES HTTP ' + res.status);
-      // Try alternate service year
-      const url2 = `https://nces.ed.gov/opengis/rest/services/K12_School_Locations/EDGE_GEOCODE_PUBLICSCH_2122/MapServer/0/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&distance=8047&units=esriSRUnit_Meter&outFields=NAME,STREET,CITY,STATE,ZIP,GSLO,GSHI,LEVEL_,ENROLLMENT,FT_TEACHER,LAT,LON&returnGeometry=false&orderByFields=ENROLLMENT+DESC&resultRecordCount=15&f=json`;
-      const res2 = await fetchWithTimeout(url2, {}, 12000);
-      if (!res2.ok) return null;
-      const data2 = await res2.json();
-      return processSchoolData(data2, lat, lon);
+  // Try multiple service year endpoints
+  const serviceYears = ['2223', '2122', '2021'];
+  const fields = 'NAME,STREET,CITY,STATE,ZIP,GSLO,GSHI,LEVEL_,ENROLLMENT,FT_TEACHER,LAT,LON';
+
+  for (const yr of serviceYears) {
+    try {
+      // Use geometryType point with distance buffer
+      const url = `https://nces.ed.gov/opengis/rest/services/K12_School_Locations/EDGE_GEOCODE_PUBLICSCH_${yr}/MapServer/0/query?` +
+        `geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326` +
+        `&spatialRel=esriSpatialRelIntersects&distance=8047&units=esriSRUnit_Meter` +
+        `&outFields=${fields}&returnGeometry=true&resultRecordCount=20&f=json`;
+      const res = await fetchWithTimeout(url, {}, 15000);
+      if (!res.ok) {
+        console.error('NCES ' + yr + ' HTTP ' + res.status);
+        continue;
+      }
+      const data = await res.json();
+      if (data?.features?.length > 0) {
+        console.log('NCES schools found via ' + yr + ': ' + data.features.length);
+        return processSchoolData(data, lat, lon);
+      }
+    } catch (e) {
+      console.error('NCES ' + yr + ' error:', e.message);
     }
-    const data = await res.json();
-    return processSchoolData(data, lat, lon);
-  } catch (e) {
-    console.error('NCES schools error:', e.message);
-    return null;
   }
+
+  // Final fallback: try the "current" endpoint
+  try {
+    const url = `https://services1.arcgis.com/Ua5sjt3LWTPigjyD/arcgis/rest/services/Public_School_Location_Current/FeatureServer/0/query?` +
+      `geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326` +
+      `&spatialRel=esriSpatialRelIntersects&distance=8047&units=esriSRUnit_Meter` +
+      `&outFields=*&returnGeometry=true&resultRecordCount=20&f=json`;
+    const res = await fetchWithTimeout(url, {}, 15000);
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.features?.length > 0) {
+        console.log('NCES current endpoint found: ' + data.features.length);
+        return processSchoolData(data, lat, lon);
+      }
+    }
+  } catch (e) {
+    console.error('NCES current fallback error:', e.message);
+  }
+
+  return null;
 }
 
 function processSchoolData(data, originLat, originLon) {
@@ -711,21 +737,23 @@ function processSchoolData(data, originLat, originLon) {
 
   const schools = features.map(f => {
     const a = f.attributes || {};
-    const sLat = a.LAT || 0;
-    const sLon = a.LON || 0;
+    // Try attributes first, then geometry for lat/lon
+    const sLat = a.LAT || a.LATITUDE || a.lat || (f.geometry?.y) || 0;
+    const sLon = a.LON || a.LONGITUDE || a.lon || (f.geometry?.x) || 0;
     const dist = haversine(originLat, originLon, sLat, sLon);
-    const enrollment = a.ENROLLMENT || 0;
-    const teachers = a.FT_TEACHER || 0;
+    const enrollment = a.ENROLLMENT || a.TOTAL || a.MEMBER || 0;
+    const teachers = a.FT_TEACHER || a.TEACHERS || 0;
     const ratio = (enrollment > 0 && teachers > 0) ? Math.round(enrollment / teachers) : null;
+    const name = a.NAME || a.SCH_NAME || a.SCHNAM || 'Unknown';
 
     return {
-      name: a.NAME || 'Unknown',
-      address: a.STREET || '',
-      city: a.CITY || '',
-      state: a.STATE || '',
-      zip: a.ZIP || '',
-      grades: gradeLabel(a.GSLO, a.GSHI),
-      level: levelLabel(a.LEVEL_),
+      name,
+      address: a.STREET || a.LSTREET1 || '',
+      city: a.CITY || a.LCITY || '',
+      state: a.STATE || a.LSTATE || '',
+      zip: a.ZIP || a.LZIP || '',
+      grades: gradeLabel(a.GSLO || a.G_LO_GR, a.GSHI || a.G_HI_GR),
+      level: levelLabel(a.LEVEL_ || a.LEVEL || a.SCH_TYPE),
       enrollment,
       teachers: Math.round(teachers),
       studentTeacherRatio: ratio,
@@ -733,7 +761,7 @@ function processSchoolData(data, originLat, originLon) {
       lat: sLat,
       lon: sLon
     };
-  });
+  }).filter(s => s.name !== 'Unknown' && s.distance < 10);
 
   // Sort by distance, take closest 8
   schools.sort((a, b) => a.distance - b.distance);
@@ -917,12 +945,33 @@ export default async function handler(req, res) {
   // Phase 1: Get location data from Geocodio (needed for county FIPS)
   const geoData = geocodioKey ? await fetchGeoData(zip, geocodioKey) : null;
 
-  // Build 5-digit county FIPS
+  // Build 5-digit county FIPS (with FCC fallback for ZIP-only geocodes)
   let fips5 = null;
   if (geoData?.fullFips) {
     fips5 = geoData.fullFips.substring(0, 5);
   } else if (geoData?.stateFips && geoData?.countyFips) {
     fips5 = (geoData.stateFips + geoData.countyFips).substring(0, 5);
+  }
+
+  // Fallback: use FCC Area API to get county FIPS from lat/lon
+  if (!fips5 && geoData?.latitude && geoData?.longitude) {
+    try {
+      const fccUrl = `https://geo.fcc.gov/api/census/area?lat=${geoData.latitude}&lon=${geoData.longitude}&format=json`;
+      const fccRes = await fetchWithTimeout(fccUrl, {}, 8000);
+      if (fccRes.ok) {
+        const fccData = await fccRes.json();
+        const fccResult = fccData?.results?.[0];
+        if (fccResult?.county_fips) {
+          fips5 = fccResult.county_fips;
+          if (geoData) {
+            geoData.stateFips = fips5.substring(0, 2);
+            geoData.countyFips = fips5;
+          }
+        }
+      }
+    } catch (e) {
+      console.error('FCC fallback error:', e.message);
+    }
   }
 
   // Phase 2: Fetch all data sources in parallel
