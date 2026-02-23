@@ -975,23 +975,19 @@ export default async function handler(req, res) {
     }
   }
 
-  // Phase 2: Fetch all data sources in parallel
-  const [census, nationalIncome, realtor, appreciation, permits, bls, hudRents] = await Promise.all([
+  // Phase 2: Fetch ALL data sources in parallel (combined for speed)
+  const lat = geoData?.latitude;
+  const lon = geoData?.longitude;
+  const address = geoData ? `${geoData.city}, ${geoData.state} ${zip}` : zip;
+
+  const [census, nationalIncome, realtor, appreciation, permits, bls, hudRents, walkScore, floodZone, nearbySchools, nearbyParks, schoolDistrict] = await Promise.all([
     fetchCensusData(zip, censusKey),
     fetchNationalIncome(censusKey),
     rapidApiKey ? fetchRealtorData(zip, rapidApiKey) : null,
     fetchAppreciation(geoData?.stateCode || stateCode, fredKey),
     fips5 ? fetchBuildingPermits(fips5) : null,
     (fips5 && blsKey) ? fetchBLSEmployment(fips5, blsKey) : null,
-    hudKey ? fetchHUDRents(zip, hudKey) : null
-  ]);
-
-  // Phase 3: "Around This Home" data (needs lat/lon from Geocodio)
-  const lat = geoData?.latitude;
-  const lon = geoData?.longitude;
-  const address = geoData ? `${geoData.city}, ${geoData.state} ${zip}` : zip;
-
-  const [walkScore, floodZone, nearbySchools, nearbyParks, schoolDistrict] = await Promise.all([
+    hudKey ? fetchHUDRents(zip, hudKey) : null,
     walkScoreKey ? fetchWalkScore(lat, lon, address, walkScoreKey) : null,
     fetchFloodZone(lat, lon),
     fetchNearbySchools(lat, lon),
