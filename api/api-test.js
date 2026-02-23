@@ -19,12 +19,12 @@ export default async function handler(req, res) {
     switch (test) {
       case 'fema':
         label = 'FEMA Flood Zone (layer 28)';
-        url = `https://hazards.fema.gov/gis/nfhl/rest/services/public/NFHL/MapServer/28/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=FLD_ZONE,ZONE_SUBTY,SFHA_TF&returnGeometry=false&f=json`;
+        url = `https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=FLD_ZONE,ZONE_SUBTY,SFHA_TF&returnGeometry=false&f=json`;
         break;
 
       case 'nces':
         label = 'NCES Schools (ArcGIS Online)';
-        url = `https://services1.arcgis.com/Ua5sjt3LWTPigjyD/arcgis/rest/services/Public_School_Location_Current/FeatureServer/0/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&distance=8047&units=esriSRUnit_Meter&outFields=NAME,CITY,STATE&returnGeometry=false&resultRecordCount=5&f=json`;
+        url = `https://services1.arcgis.com/Ua5sjt3LWTPigjyD/arcgis/rest/services/School_Characteristics_Current/FeatureServer/0/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&distance=8047&units=esriSRUnit_Meter&outFields=NAME,CITY,STATE&returnGeometry=false&resultRecordCount=5&f=json`;
         break;
 
       case 'nces2':
