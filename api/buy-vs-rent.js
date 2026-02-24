@@ -135,7 +135,7 @@ async function fetchAppreciation(stateCode, fredKey) {
     const rate5yr = calcRate(20);
     const rate10yr = calcRate(40);
     const rate1yr = calcRate(4);
-    const forecastRate = rate5yr || rate1yr || 3.5;
+    const forecastRate = rate1yr || rate5yr || 3.5;
 
     return {
       oneYear: rate1yr,
