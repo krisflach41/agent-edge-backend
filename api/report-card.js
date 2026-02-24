@@ -393,6 +393,50 @@ async function fetchAppreciation(stateCode, fredKey) {
   }
 }
 
+// ===== FRED MEDIAN DAYS ON MARKET (county-level, from Realtor.com via FRED) =====
+async function fetchMedianDOM(countyFips, fredKey) {
+  if (!countyFips || !fredKey) return null;
+
+  try {
+    // Series pattern: MEDDAYONMAR + 5-digit county FIPS
+    const seriesId = 'MEDDAYONMAR' + countyFips;
+    const url = FRED_BASE + '?series_id=' + seriesId + '&api_key=' + fredKey + '&file_type=json&sort_order=desc&limit=13';
+    const res = await fetchWithTimeout(url, {}, 8000);
+    if (!res.ok) {
+      console.error('FRED DOM HTTP ' + res.status);
+      return null;
+    }
+    const data = await res.json();
+    const obs = (data.observations || []).filter(o => o.value && o.value !== '.');
+    if (obs.length === 0) return null;
+
+    const latest = parseInt(obs[0].value);
+    const latestDate = obs[0].date;
+
+    // Build 12-month trend
+    const trend = obs.slice(0, 12).map(o => ({
+      date: o.date,
+      days: parseInt(o.value)
+    })).reverse();
+
+    // Year-over-year comparison
+    const yoyDom = obs.length >= 12 ? parseInt(obs[11].value) : null;
+    const yoyChange = (yoyDom && latest) ? latest - yoyDom : null;
+
+    return {
+      medianDom: latest,
+      latestDate: latestDate,
+      trend: trend,
+      yoyPriorDom: yoyDom,
+      yoyChange: yoyChange,
+      _source: 'Realtor.com Median Days on Market via FRED (county-level, monthly)'
+    };
+  } catch (e) {
+    console.error('FRED DOM error:', e.message);
+    return null;
+  }
+}
+
 // ===== HUD SOCDS BUILDING PERMITS (actual permits, not survey estimates) =====
 async function fetchBuildingPermits(countyFips) {
   if (!countyFips) return null;
@@ -1091,7 +1135,8 @@ export default async function handler(req, res) {
     tryFetch('FEMA', () => fetchFloodZone(lat, lon)),
     tryFetch('NCES', () => fetchNearbySchools(lat, lon)),
     tryFetch('Overpass', () => fetchNearbyParks(lat, lon)),
-    tryFetch('SchoolDistrict', () => fetchSchoolDistrict(lat, lon))
+    tryFetch('SchoolDistrict', () => fetchSchoolDistrict(lat, lon)),
+    fips5 ? tryFetch('FRED_DOM', () => fetchMedianDOM(fips5, fredKey)) : { _ok: true, data: null }
   ]);
 
   const census = results[0];
@@ -1106,6 +1151,7 @@ export default async function handler(req, res) {
   const nearbySchools = results[9]?.data !== undefined ? results[9].data : results[9];
   const nearbyParks = results[10]?.data !== undefined ? results[10].data : results[10];
   const schoolDistrict = results[11]?.data !== undefined ? results[11].data : results[11];
+  const fredDom = results[12]?.data !== undefined ? results[12].data : results[12];
 
   // Collect diagnostics for debugging
   const _diagnostics = results.map((r, i) => {
@@ -1176,11 +1222,14 @@ export default async function handler(req, res) {
     // Building Permits (HUD SOCDS - actual permits issued)
     buildingPermits: census?.constructionActivity || null,
 
-    // Market Data (Realtor.com)
+    // Market Data (Realtor.com + FRED DOM)
     activeListings: realtor?.activeListings || null,
     medianListPrice: realtor?.medianListPrice || null,
-    medianDom: realtor?.medianDom || null,
-    avgDom: realtor?.avgDom || null,
+    medianDom: fredDom?.medianDom || realtor?.medianDom || null,
+    medianDomSource: fredDom ? 'FRED (county-level)' : (realtor?.medianDom ? 'Realtor.com (listing-level)' : null),
+    medianDomDate: fredDom?.latestDate || null,
+    medianDomTrend: fredDom?.trend || null,
+    medianDomYoyChange: fredDom?.yoyChange || null,
     newListings: realtor?.newListings || null,
 
     // Appreciation (FHFA via FRED)
@@ -1234,6 +1283,7 @@ export default async function handler(req, res) {
       employment: bls ? 'Bureau of Labor Statistics LAUS (county-level, monthly)' : 'Census ACS (annual estimate)',
       rents: hudRents ? 'HUD Fair Market Rents (' + (hudRents.year || 'current') + ')' : 'Census ACS median rent',
       geocoding: geoData ? 'Geocodio' : 'Census zip-to-state lookup',
+      daysOnMarket: fredDom ? 'Realtor.com Median Days on Market via FRED (county-level, monthly)' : 'Not available',
       walkability: walkScore ? 'Walk Score API' : 'Not available',
       floodZone: floodZone ? 'FEMA National Flood Hazard Layer' : 'Not available',
       schools: nearbySchools ? 'NCES Common Core of Data (public schools)' : 'Not available',
