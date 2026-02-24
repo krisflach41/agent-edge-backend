@@ -92,7 +92,17 @@ async function fetchCensusData(zip, censusKey) {
     'B25064_001E',  // median gross rent
     'B25001_001E',  // total housing units
     'B25002_002E',  // occupied
-    'B25002_003E'   // vacant
+    'B25002_003E',  // vacant
+    'B25034_002E',  // built 2020 or later
+    'B25034_003E',  // built 2010-2019
+    'B25034_004E',  // built 2000-2009
+    'B25034_005E',  // built 1990-1999
+    'B25034_006E',  // built 1980-1989
+    'B25034_007E',  // built 1970-1979
+    'B25034_008E',  // built 1960-1969
+    'B25034_009E',  // built 1950-1959
+    'B25034_010E',  // built 1940-1949
+    'B25034_011E'   // built 1939 or earlier
   ].join(',');
 
   const ageVars = [
@@ -160,6 +170,29 @@ async function fetchCensusData(zip, censusKey) {
   const vacant = obj['B25002_003E'] || 0;
   const vacancyRate = totalUnits > 0 ? Math.round((vacant / totalUnits) * 1000) / 10 : null;
 
+  // Year structure built (B25034)
+  const built2020plus = obj['B25034_002E'] || 0;
+  const built2010s = obj['B25034_003E'] || 0;
+  const built2000s = obj['B25034_004E'] || 0;
+  const built1990s = obj['B25034_005E'] || 0;
+  const built1980s = obj['B25034_006E'] || 0;
+  const built1970s = obj['B25034_007E'] || 0;
+  const built1960s = obj['B25034_008E'] || 0;
+  const built1950s = obj['B25034_009E'] || 0;
+  const built1940s = obj['B25034_010E'] || 0;
+  const builtPre1940 = obj['B25034_011E'] || 0;
+
+  const constructionActivity = {
+    since2020: built2020plus,
+    decade2010s: built2010s,
+    decade2000s: built2000s,
+    decade1990s: built1990s,
+    olderStock: built1980s + built1970s + built1960s + built1950s + built1940s + builtPre1940,
+    medianAgeCategory: (built2020plus + built2010s + built2000s) > (totalUnits * 0.5) ? 'Newer housing stock' :
+                        (builtPre1940 + built1940s + built1950s) > (totalUnits * 0.5) ? 'Older housing stock' : 'Mixed-age housing stock',
+    _source: 'Census ACS Year Structure Built (B25034)'
+  };
+
   let demographics = null;
   if (ageData) {
     const aH = ageData[0];
@@ -207,7 +240,8 @@ async function fetchCensusData(zip, censusKey) {
     medianRent,
     affordabilityIndex,
     renterAffordPct,
-    demographics
+    demographics,
+    constructionActivity
   };
 }
 
@@ -1026,7 +1060,7 @@ export default async function handler(req, res) {
     fetchNationalIncome(censusKey),
     rapidApiKey ? fetchRealtorData(zip, rapidApiKey) : null,
     fetchAppreciation(geoData?.stateCode || stateCode, fredKey),
-    fips5 ? tryFetch('buildingPermits', () => fetchBuildingPermits(fips5)) : { _ok: true, data: null },
+    null, // permits - now sourced from Census constructionActivity,
     (fips5 && blsKey) ? tryFetch('BLS', () => fetchBLSEmployment(fips5, blsKey)) : { _ok: true, data: null },
     hudKey ? tryFetch('HUD_FMR', () => fetchHUDRents(zip, hudKey, geoData?.stateFips || stateFips, fips5)) : { _ok: true, data: null },
     walkScoreKey ? fetchWalkScore(lat, lon, address, walkScoreKey) : null,
@@ -1116,16 +1150,7 @@ export default async function handler(req, res) {
     },
 
     // Building Permits (HUD SOCDS - actual permits issued)
-    buildingPermits: permits ? {
-      since2020: permits.since2020,
-      period2010s: permits.period2010s,
-      period2000s: permits.period2000s,
-      latestYear: permits.latestYear,
-      latestTotal: permits.latestTotal,
-      annualData: permits.annualData,
-      countyName: geoData?.county || null,
-      _source: permits._source
-    } : null,
+    buildingPermits: census?.constructionActivity || null,
 
     // Market Data (Realtor.com)
     activeListings: realtor?.activeListings || null,
