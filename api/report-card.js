@@ -989,7 +989,7 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  const { zip } = req.query;
+  const { zip, address: addressParam } = req.query;
   if (!zip || !/^\d{5}$/.test(zip)) {
     return res.status(400).json({ error: 'Valid 5-digit zip code required' });
   }
@@ -1007,8 +1007,30 @@ export default async function handler(req, res) {
 
   const stateCode = zipToState(zip);
 
-  // Phase 1: Get location data from Geocodio (needed for county FIPS)
+  // Phase 1: Get location data from Geocodio
+  // If address provided, geocode the address for precise lat/lon (schools, parks, walk score, flood)
+  // Always also geocode ZIP for county FIPS data
   const geoData = geocodioKey ? await fetchGeoData(zip, geocodioKey) : null;
+
+  // If address provided, get precise lat/lon from the actual address
+  let preciseLat = null, preciseLon = null;
+  if (addressParam && geocodioKey) {
+    try {
+      const addrQuery = encodeURIComponent(addressParam);
+      const addrUrl = `https://api.geocod.io/v1.7/geocode?q=${addrQuery}&api_key=${geocodioKey}`;
+      const addrRes = await fetchWithTimeout(addrUrl, {}, 8000);
+      if (addrRes.ok) {
+        const addrData = await addrRes.json();
+        const addrResult = addrData?.results?.[0];
+        if (addrResult?.location) {
+          preciseLat = addrResult.location.lat;
+          preciseLon = addrResult.location.lng;
+        }
+      }
+    } catch (e) {
+      console.error('Address geocode error:', e.message);
+    }
+  }
 
   // Build 5-digit county FIPS (with FCC fallback for ZIP-only geocodes)
   let fips5 = null;
@@ -1040,9 +1062,11 @@ export default async function handler(req, res) {
   }
 
   // Phase 2: Fetch ALL data sources in parallel (combined for speed)
-  const lat = geoData?.latitude;
-  const lon = geoData?.longitude;
-  const address = geoData ? `${geoData.city}, ${geoData.state} ${zip}` : zip;
+  // Use precise address coordinates for location-sensitive APIs (schools, parks, walk score, flood)
+  // Fall back to ZIP centroid if no address provided
+  const lat = preciseLat || geoData?.latitude;
+  const lon = preciseLon || geoData?.longitude;
+  const address = addressParam || (geoData ? `${geoData.city}, ${geoData.state} ${zip}` : zip);
 
   // Diagnostic wrapper to capture exact errors
   async function tryFetch(name, fn) {
@@ -1116,10 +1140,10 @@ export default async function handler(req, res) {
       city: geoData.city,
       county: geoData.county,
       state: geoData.state,
-      latitude: geoData.latitude,
-      longitude: geoData.longitude,
+      latitude: lat,
+      longitude: lon,
       countyFips: fips5,
-      _source: geoData.source
+      _source: preciseLat ? 'Geocodio (address-level)' : 'Geocodio (ZIP centroid)'
     } : null,
 
     censusYear: census?._year || null,
