@@ -86,26 +86,16 @@ export default async function handler(req, res) {
     // Fetch admin/lender name for cheat sheet personalization
     let lenderName = '';
     try {
-      // Try is_admin boolean column first
-      let { data: adminUsers } = await supabase
+      const { data: adminUsers } = await supabase
         .from('users')
         .select('full_name')
-        .eq('is_admin', true)
+        .eq('is_admin', 'TRUE')
         .limit(1);
-      // Fallback: check brokerage = 'Admin'
-      if (!adminUsers || adminUsers.length === 0) {
-        const result = await supabase
-          .from('users')
-          .select('full_name')
-          .eq('brokerage', 'Admin')
-          .limit(1);
-        adminUsers = result.data;
-      }
       if (adminUsers && adminUsers.length > 0 && adminUsers[0].full_name) {
         lenderName = adminUsers[0].full_name;
       }
     } catch (e) {
-      // Non-critical — cheat sheets fall back to generic "my lender"
+      // Non-critical
     }
 
     // Return user profile (never return password)
