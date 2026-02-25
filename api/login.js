@@ -83,6 +83,22 @@ export default async function handler(req, res) {
       // Non-critical
     }
 
+    // Fetch admin/lender name for cheat sheet personalization
+    let lenderName = '';
+    try {
+      const { data: adminUser } = await supabase
+        .from('users')
+        .select('full_name')
+        .eq('is_admin', true)
+        .limit(1)
+        .single();
+      if (adminUser && adminUser.full_name) {
+        lenderName = adminUser.full_name;
+      }
+    } catch (e) {
+      // Non-critical — cheat sheets fall back to generic "my lender"
+    }
+
     // Return user profile (never return password)
     return res.status(200).json({
       success: true,
@@ -96,7 +112,8 @@ export default async function handler(req, res) {
       isAdmin: user.is_admin || false,
       role: user.role || 'trial',
       trialStart: user.trial_start_date || '',
-      hasHeadshot: hasHeadshot
+      hasHeadshot: hasHeadshot,
+      lenderName: lenderName
     });
 
   } catch (error) {
