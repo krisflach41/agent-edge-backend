@@ -153,8 +153,13 @@ CRITICAL RULE: Both summaries must cover ALL of the same topics and information 
    - This is a technical summary for real estate professionals who understand industry terminology
    - Cover EVERYTHING in the report — rates, bonds, economic data, Fed commentary, all of it
    - Use proper industry terms (MBS, basis points, yield curve, etc.)
-   - Structure: "Market Open" (what happened today) then "What This Means" (implications for housing/rates)
-   - 200-350 words
+   - Structure it with these clearly labeled sections, each as its own paragraph:
+     "Market Open" — 2-3 sentences on what happened at open (stocks, bonds, MBS, yields)
+     "Economic Data" — key reports and numbers released today, what they showed
+     "Housing & Rates" — what this means for mortgage rates, inventory, buyer/seller activity
+     "What This Means" — bottom line implications, what to watch next
+   - Use line breaks between sections (double newline)
+   - 250-400 words
 
 2. CLIENT-FRIENDLY SUMMARY
    - Written in the voice of a real estate agent updating their client
