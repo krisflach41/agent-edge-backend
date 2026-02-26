@@ -215,5 +215,34 @@ Keep it concise and actionable — this is a quick-reference cheat sheet, not a 
     }
   }
 
+  // ---- FORWARD GUS RESPONSE TO LO (HOT LEAD) ----
+  if (action === 'forward_gus') {
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+      return res.status(500).json({ error: 'Supabase not configured' });
+    }
+
+    try {
+      var insertResp = await fetch(SUPABASE_URL + '/rest/v1/scenario_submissions', {
+        method: 'POST',
+        headers: { ...headers, 'Prefer': 'return=representation' },
+        body: JSON.stringify({
+          type: 'forwarded_gus',
+          realtor_name: body.realtor_name || 'Unknown',
+          realtor_email: body.realtor_email || '',
+          question: body.question || '',
+          ai_response: body.gus_response || '',
+          status: 'new',
+          scenario_data: { realtor_notes: body.realtor_notes || '' }
+        })
+      });
+
+      var insertData = await insertResp.json();
+      return res.status(200).json({ success: true, id: insertData[0] ? insertData[0].id : null });
+
+    } catch (err) {
+      return res.status(500).json({ error: 'Failed to forward scenario: ' + err.message });
+    }
+  }
+
   return res.status(400).json({ error: 'Unknown action: ' + action });
 };
