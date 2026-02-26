@@ -145,14 +145,24 @@ Rules:
 
       var summaryPrompt = `You are a mortgage industry content writer for a loan officer named Kristy Flach. She sends a daily morning briefing to her realtor partners.
 
-Below is raw market commentary. Rewrite it into TWO versions:
+Below is a raw technical market report. You must read and understand ALL of the information in this report, then write TWO complete summaries.
 
-1. REALTOR PARTNER SUMMARY - Professional but approachable. Written for real estate agents who understand the market. Include:
-   - A "Market Open" section (2-3 sentences on what's happening today)
-   - A "What This Means" section (2-3 sentences on implications for housing/rates)
-   - Keep it punchy — 150-250 words total
+CRITICAL RULE: Both summaries must cover ALL of the same topics and information from the report. Do NOT split the content between them. Do NOT put some topics in one and different topics in the other. Every key point in the Market Summary must also appear in the Client-Friendly Summary, just explained differently.
 
-2. CLIENT-FRIENDLY SUMMARY - Written for homebuyers/sellers with no financial background. Conversational, reassuring tone. Explain complex concepts simply. No jargon. 150-250 words.
+1. REALTOR PARTNER SUMMARY
+   - This is a technical summary for real estate professionals who understand industry terminology
+   - Cover EVERYTHING in the report — rates, bonds, economic data, Fed commentary, all of it
+   - Use proper industry terms (MBS, basis points, yield curve, etc.)
+   - Structure: "Market Open" (what happened today) then "What This Means" (implications for housing/rates)
+   - 200-350 words
+
+2. CLIENT-FRIENDLY SUMMARY
+   - This covers the EXACT SAME information as the Market Summary above, but translated into plain English
+   - Written for homebuyers and sellers who have zero financial background
+   - No jargon whatsoever — if the Market Summary says "MBS prices rallied 22 basis points," this version says "mortgage-related investments gained value today, which is good news for rates"
+   - Conversational, warm, reassuring tone
+   - Every topic from the Market Summary must appear here, just simplified
+   - 200-350 words
 
 Return ONLY valid JSON in this exact format (no markdown, no backticks):
 {
