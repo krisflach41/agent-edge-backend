@@ -1,9 +1,8 @@
 // /api/briefing.js - Read/write briefing data from Supabase
-// GET  = portal reads current briefing (public)
-// POST = admin saves updated briefing (requires admin password)
+// GET  = read current briefing (public) or weekly history (?action=history)
+// POST = save updated briefing + log to history
 
 module.exports = async (req, res) => {
-  // CORS
   var origin = req.headers.origin || '';
   var allowed = ['https://kristyflach.com', 'https://kristyflach41.github.io', 'https://agent-edge-backend.vercel.app'];
   if (allowed.indexOf(origin) !== -1) {
@@ -23,20 +22,48 @@ module.exports = async (req, res) => {
     return res.status(500).json({ error: 'Supabase not configured' });
   }
 
-  // ===== GET: Read current briefing data =====
+  var headers = {
+    'apikey': SUPABASE_KEY,
+    'Authorization': 'Bearer ' + SUPABASE_KEY,
+    'Content-Type': 'application/json'
+  };
+
+  // ===== GET =====
   if (req.method === 'GET') {
-    try {
-      var resp = await fetch(SUPABASE_URL + '/rest/v1/briefing_data?id=eq.current&select=*', {
-        headers: {
-          'apikey': SUPABASE_KEY,
-          'Authorization': 'Bearer ' + SUPABASE_KEY,
-          'Content-Type': 'application/json'
-        }
-      });
-      var rows = await resp.json();
-      if (!rows || rows.length === 0) {
-        return res.status(200).json({});
+    var action = req.query.action;
+
+    // Weekly history for Week in Review generation
+    if (action === 'history') {
+      try {
+        var now = new Date();
+        var dayOfWeek = now.getDay();
+        var mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+        var monday = new Date(now);
+        monday.setDate(now.getDate() + mondayOffset);
+        var mondayStr = monday.toISOString().split('T')[0];
+        var todayStr = now.toISOString().split('T')[0];
+
+        var resp = await fetch(
+          SUPABASE_URL + '/rest/v1/briefing_history?publish_date=gte.' + mondayStr + '&publish_date=lte.' + todayStr + '&order=publish_date.asc&select=publish_date,market_summary,client_friendly',
+          { headers: headers }
+        );
+        var rows = await resp.json();
+
+        return res.status(200).json({
+          weekStart: mondayStr,
+          weekEnd: todayStr,
+          days: Array.isArray(rows) ? rows : []
+        });
+      } catch (err) {
+        return res.status(500).json({ error: 'Failed to read history: ' + err.message });
       }
+    }
+
+    // Default: read current briefing
+    try {
+      var resp = await fetch(SUPABASE_URL + '/rest/v1/briefing_data?id=eq.current&select=*', { headers: headers });
+      var rows = await resp.json();
+      if (!rows || rows.length === 0) return res.status(200).json({});
       var data = rows[0];
       return res.status(200).json({
         economicCalendar: data.economic_calendar || null,
@@ -51,44 +78,64 @@ module.exports = async (req, res) => {
     }
   }
 
-  // ===== POST: Save briefing data =====
+  // ===== POST =====
   if (req.method === 'POST') {
     try {
       var body = req.body || {};
-      
-      // Build the update object — only include fields that were sent
-      var update = { last_updated: new Date().toISOString() };
-      
-      if (body.economicCalendar !== undefined) {
-        update.economic_calendar = body.economicCalendar;
-      }
-      if (body.marketSummary !== undefined) {
-        update.market_summary = body.marketSummary;
-      }
-      if (body.clientFriendly !== undefined) {
-        update.client_friendly = body.clientFriendly;
-      }
-      if (body.weekInReview !== undefined) {
-        update.week_in_review = body.weekInReview;
-      }
-      if (body.calendarWeek !== undefined) {
-        update.calendar_week = body.calendarWeek;
-      }
 
+      // Build update for current briefing
+      var update = { last_updated: new Date().toISOString() };
+
+      if (body.economicCalendar !== undefined) update.economic_calendar = body.economicCalendar;
+      if (body.marketSummary !== undefined) update.market_summary = body.marketSummary;
+      if (body.clientFriendly !== undefined) update.client_friendly = body.clientFriendly;
+      if (body.weekInReview !== undefined) update.week_in_review = body.weekInReview;
+      if (body.calendarWeek !== undefined) update.calendar_week = body.calendarWeek;
+
+      // Update current briefing
       var resp = await fetch(SUPABASE_URL + '/rest/v1/briefing_data?id=eq.current', {
         method: 'PATCH',
-        headers: {
-          'apikey': SUPABASE_KEY,
-          'Authorization': 'Bearer ' + SUPABASE_KEY,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=minimal'
-        },
+        headers: Object.assign({}, headers, { 'Prefer': 'return=minimal' }),
         body: JSON.stringify(update)
       });
 
       if (!resp.ok) {
         var errText = await resp.text();
         throw new Error('Supabase PATCH failed: ' + resp.status + ' ' + errText);
+      }
+
+      // Also log to history if we have summaries (for Week in Review generation)
+      if (body.marketSummary || body.clientFriendly) {
+        var today = new Date().toISOString().split('T')[0];
+
+        // Check if we already have an entry for today
+        var existResp = await fetch(
+          SUPABASE_URL + '/rest/v1/briefing_history?publish_date=eq.' + today + '&select=id',
+          { headers: headers }
+        );
+        var existing = await existResp.json();
+
+        var historyRow = { publish_date: today };
+        if (body.marketSummary) historyRow.market_summary = body.marketSummary;
+        if (body.clientFriendly) historyRow.client_friendly = body.clientFriendly;
+        if (body.economicCalendar) historyRow.economic_calendar = body.economicCalendar;
+        if (body.calendarWeek) historyRow.calendar_week = body.calendarWeek;
+
+        if (existing && existing.length > 0) {
+          // Update today's row
+          await fetch(SUPABASE_URL + '/rest/v1/briefing_history?publish_date=eq.' + today, {
+            method: 'PATCH',
+            headers: Object.assign({}, headers, { 'Prefer': 'return=minimal' }),
+            body: JSON.stringify(historyRow)
+          });
+        } else {
+          // Insert new row
+          await fetch(SUPABASE_URL + '/rest/v1/briefing_history', {
+            method: 'POST',
+            headers: Object.assign({}, headers, { 'Prefer': 'return=minimal' }),
+            body: JSON.stringify(historyRow)
+          });
+        }
       }
 
       return res.status(200).json({ success: true, message: 'Briefing updated' });
