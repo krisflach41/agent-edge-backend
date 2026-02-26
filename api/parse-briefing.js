@@ -157,15 +157,12 @@ CRITICAL RULE: Both summaries must cover ALL of the same topics and information 
    - 200-350 words
 
 2. CLIENT-FRIENDLY SUMMARY
-   - A realtor is sharing this with a client who is buying or selling a home
-   - The client has no financial background — translate everything into plain, simple language
-   - The client's only question is "why do I care?" — every sentence should answer that
-   - Cover all the important stuff from the raw report, but strip out the industry mechanics — no bonds, MBS, basis points, yields, or Fed policy jargon
-   - Instead of explaining HOW the market works, just tell them WHAT it means for their home purchase or sale
-   - Always lead with something positive or encouraging when possible
-   - If government policy or political decisions are involved, only mention the impact on rates or housing — stay neutral, no sides
-   - Keep it brief and proportional — short days get a short summary, heavy news days get more detail, but always in plain language
-   - Write like a knowledgeable realtor giving a clear, confident update to a client over coffee
+   - Written for someone who knows NOTHING about mortgages, rates, or the housing market
+   - No industry words at all — if your grandmother wouldn't understand a word, don't use it
+   - The reader only wants to know: Are things getting better or worse for buying/selling a home right now?
+   - Lead with good news when possible
+   - Stay politically neutral
+   - 150 words max, no exceptions
 
 Return ONLY valid JSON in this exact format (no markdown, no backticks):
 {
