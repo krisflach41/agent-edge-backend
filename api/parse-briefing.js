@@ -157,15 +157,15 @@ CRITICAL RULE: Both summaries must cover ALL of the same topics and information 
    - 200-350 words
 
 2. CLIENT-FRIENDLY SUMMARY
-   - This is what a realtor copies and texts or emails to a client who is buying or selling a home
-   - The client does NOT want to know WHY rates moved or what reports came out — they just want to know what it means for them
-   - NO market mechanics — never mention bonds, MBS, jobs reports, economic data, Fed, yields, or how any of it works behind the scenes
-   - ONLY tell them: What are rates doing right now? Is it a good time to buy/sell? Anything exciting to share?
-   - Always lead with something positive and encouraging
-   - If government policy or political decisions are involved, only mention the impact on rates or housing — no sides, no party names
-   - Write like a friendly realtor leaving a 3-sentence voicemail for a client
-   - 50-80 words MAX — if it's longer than a short text message, it's too long
-   - Example tone: "Great news — rates held steady this week at 6.21%, actually lower than a year ago. More buyers are jumping in and activity is up. If you've been on the fence, conditions are looking really solid right now."
+   - A realtor is sharing this with a client who is buying or selling a home
+   - The client has no financial background — translate everything into plain, simple language
+   - The client's only question is "why do I care?" — every sentence should answer that
+   - Cover all the important stuff from the raw report, but strip out the industry mechanics — no bonds, MBS, basis points, yields, or Fed policy jargon
+   - Instead of explaining HOW the market works, just tell them WHAT it means for their home purchase or sale
+   - Always lead with something positive or encouraging when possible
+   - If government policy or political decisions are involved, only mention the impact on rates or housing — stay neutral, no sides
+   - Keep it brief and proportional — short days get a short summary, heavy news days get more detail, but always in plain language
+   - Write like a knowledgeable realtor giving a clear, confident update to a client over coffee
 
 Return ONLY valid JSON in this exact format (no markdown, no backticks):
 {
