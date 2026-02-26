@@ -157,12 +157,17 @@ CRITICAL RULE: Both summaries must cover ALL of the same topics and information 
    - 200-350 words
 
 2. CLIENT-FRIENDLY SUMMARY
-   - Written for someone who knows NOTHING about mortgages, rates, or the housing market
-   - No industry words at all — if your grandmother wouldn't understand a word, don't use it
-   - The reader only wants to know: Are things getting better or worse for buying/selling a home right now?
-   - Lead with good news when possible
-   - Stay politically neutral
-   - 150 words max, no exceptions
+   - Written in the voice of a real estate agent updating their client
+   - Take the complicated market information and make it simple — someone with zero industry knowledge should follow every word
+   - Structure it exactly like this:
+     a) A short intro (2-3 sentences) explaining what happened today in plain terms and why it matters
+     b) A "What really matters:" section with 3-4 bullet points of the key takeaways (rates, buyer activity, market conditions)
+     c) A "Why this matters to you:" section with bullet points for buyers, sellers, and refinancers — one sentence each telling them what this means for THEM specifically
+     d) A brief 1-sentence closing that reassures or looks ahead
+   - Always frame things through the lens of "should I buy/sell/refinance right now?"
+   - Lead with perspective and reassurance, not alarm — even when news is mixed
+   - Use plain conversational language, short sentences
+   - Keep the whole thing under 200 words
 
 Return ONLY valid JSON in this exact format (no markdown, no backticks):
 {
