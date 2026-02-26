@@ -206,7 +206,70 @@ ${rawContent}`;
       });
     }
 
-    return res.status(400).json({ error: 'Invalid action. Use parse_calendar or rewrite_summaries' });
+    // ===== ACTION 3: Generate Week in Review =====
+    if (action === 'generate_wir') {
+      var dailySummaries = body.dailySummaries; // array of { date, marketSummary, clientFriendly }
+      var weekStart = body.weekStart;
+      var weekEnd = body.weekEnd;
+
+      if (!dailySummaries || !Array.isArray(dailySummaries) || dailySummaries.length === 0) {
+        return res.status(400).json({ error: 'No daily summaries provided' });
+      }
+
+      // Build the context from the week's summaries
+      var summaryContext = dailySummaries.map(function(day) {
+        var dateObj = new Date(day.publish_date || day.date);
+        var dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+        return dayName + ':\n' + (day.market_summary || day.marketSummary || 'No summary published');
+      }).join('\n\n---\n\n');
+
+      // Format the week ending date
+      var endDate = new Date(weekEnd);
+      var weekEndFormatted = endDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+      var wirPrompt = 'You are writing a Week in Review for a mortgage loan officer\'s realtor partner portal. Below are the daily market summaries published Monday through Friday.\n\nWrite a concise weekly recap (200-300 words) that:\n- Highlights the most significant market moves of the week\n- Notes the direction of mortgage rates and bonds\n- Mentions key economic data releases and their impact\n- Ends with a forward-looking sentence about what to watch next week\n- Uses a professional but approachable tone\n\nReturn ONLY valid JSON (no markdown, no backticks):\n{\n  "weekInReview": "The full week in review text here...",\n  "weekEndingLabel": "Week Ending ' + weekEndFormatted + '"\n}\n\nDAILY SUMMARIES:\n\n' + summaryContext;
+
+      var wirResponse = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_KEY,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 2000,
+          messages: [{ role: 'user', content: wirPrompt }]
+        })
+      });
+
+      var wirData = await wirResponse.json();
+      if (!wirResponse.ok) {
+        throw new Error(wirData.error?.message || 'Claude API failed');
+      }
+
+      var wirText = wirData.content.find(function(b) { return b.type === 'text'; })?.text || '';
+      wirText = wirText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+
+      var wirParsed;
+      try {
+        wirParsed = JSON.parse(wirText);
+      } catch (e) {
+        return res.status(200).json({
+          success: false,
+          error: 'Failed to parse WIR response as JSON',
+          raw: wirText
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        weekInReview: wirParsed.weekInReview || '',
+        weekEndingLabel: wirParsed.weekEndingLabel || 'Week Ending ' + weekEndFormatted
+      });
+    }
+
+    return res.status(400).json({ error: 'Invalid action. Use parse_calendar, rewrite_summaries, or generate_wir' });
 
   } catch (err) {
     console.error('parse-briefing error:', err);
