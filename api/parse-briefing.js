@@ -157,12 +157,14 @@ CRITICAL RULE: Both summaries must cover ALL of the same topics and information 
    - 200-350 words
 
 2. CLIENT-FRIENDLY SUMMARY
-   - This covers the EXACT SAME information as the Market Summary above, but translated into plain English
-   - Written for homebuyers and sellers who have zero financial background
-   - No jargon whatsoever — if the Market Summary says "MBS prices rallied 22 basis points," this version says "mortgage-related investments gained value today, which is good news for rates"
-   - Conversational, warm, reassuring tone
-   - Every topic from the Market Summary must appear here, just simplified
-   - 200-350 words
+   - This is what a realtor copies and texts or emails to a client who is buying or selling a home
+   - The client does NOT care about bonds, MBS, basis points, yields, Fed policy details, or economic indicators
+   - The client ONLY cares about: Are mortgage rates going up or down? Is now a good time to buy or sell? Is there anything to worry about or be excited about?
+   - Write like you're texting a friend — short sentences, plain words, zero jargon
+   - Always find something encouraging or positive the realtor can lead with — even if the news is mixed, frame it constructively
+   - If government policy or political decisions are involved, report the impact without taking sides or naming parties
+   - This should be SHORT — 100-150 words max, 3-4 short paragraphs
+   - Think of it as: "Here's what this all means for YOU in plain English"
 
 Return ONLY valid JSON in this exact format (no markdown, no backticks):
 {
