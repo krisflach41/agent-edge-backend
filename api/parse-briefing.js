@@ -158,13 +158,14 @@ CRITICAL RULE: Both summaries must cover ALL of the same topics and information 
 
 2. CLIENT-FRIENDLY SUMMARY
    - This is what a realtor copies and texts or emails to a client who is buying or selling a home
-   - The client does NOT care about bonds, MBS, basis points, yields, Fed policy details, or economic indicators
-   - The client ONLY cares about: Are mortgage rates going up or down? Is now a good time to buy or sell? Is there anything to worry about or be excited about?
-   - Write like you're texting a friend — short sentences, plain words, zero jargon
-   - Always find something encouraging or positive the realtor can lead with — even if the news is mixed, frame it constructively
-   - If government policy or political decisions are involved, report the impact without taking sides or naming parties
-   - This should be SHORT — 100-150 words max, 3-4 short paragraphs
-   - Think of it as: "Here's what this all means for YOU in plain English"
+   - The client does NOT want to know WHY rates moved or what reports came out — they just want to know what it means for them
+   - NO market mechanics — never mention bonds, MBS, jobs reports, economic data, Fed, yields, or how any of it works behind the scenes
+   - ONLY tell them: What are rates doing right now? Is it a good time to buy/sell? Anything exciting to share?
+   - Always lead with something positive and encouraging
+   - If government policy or political decisions are involved, only mention the impact on rates or housing — no sides, no party names
+   - Write like a friendly realtor leaving a 3-sentence voicemail for a client
+   - 50-80 words MAX — if it's longer than a short text message, it's too long
+   - Example tone: "Great news — rates held steady this week at 6.21%, actually lower than a year ago. More buyers are jumping in and activity is up. If you've been on the fence, conditions are looking really solid right now."
 
 Return ONLY valid JSON in this exact format (no markdown, no backticks):
 {
