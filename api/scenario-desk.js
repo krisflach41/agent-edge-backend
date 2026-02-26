@@ -215,6 +215,32 @@ Keep it concise and actionable — this is a quick-reference cheat sheet, not a 
     }
   }
 
+  // ---- UPDATE STATUS (from Mission Control) ----
+  if (action === 'update_status') {
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+      return res.status(500).json({ error: 'Supabase not configured' });
+    }
+
+    var id = body.id;
+    var newStatus = body.status;
+    if (!id || !newStatus) return res.status(400).json({ error: 'id and status required' });
+
+    var updateData = { status: newStatus };
+    if (newStatus === 'called_back') updateData.called_back_at = new Date().toISOString();
+    if (newStatus === 'reviewed') updateData.reviewed_at = new Date().toISOString();
+
+    try {
+      await fetch(SUPABASE_URL + '/rest/v1/scenario_submissions?id=eq.' + id, {
+        method: 'PATCH',
+        headers: headers,
+        body: JSON.stringify(updateData)
+      });
+      return res.status(200).json({ success: true });
+    } catch (err) {
+      return res.status(500).json({ error: 'Failed to update: ' + err.message });
+    }
+  }
+
   // ---- FORWARD GUS RESPONSE TO LO (HOT LEAD) ----
   if (action === 'forward_gus') {
     if (!SUPABASE_URL || !SUPABASE_KEY) {
