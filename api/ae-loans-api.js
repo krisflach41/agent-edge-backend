@@ -164,7 +164,7 @@ export default async function handler(req, res) {
         'loan_program', 'loan_amount', 'appraised_value', 'interest_rate', 'lock_status',
         'occupancy', 'subject_street', 'subject_city', 'subject_state', 'subject_zip',
         'source', 'realtor_name', 'date_mutual', 'date_emd', 'date_appraisal',
-        'date_inspection', 'date_conditional', 'date_ctc', 'date_final_cd', 'date_closing',
+        'date_inspection', 'date_conditional', 'date_ctc', 'date_final_cd', 'date_contract_exp', 'date_closing',
         'strike_rate', 'notes'];
       fields.forEach(function(f) {
         if (cl[f] !== undefined) updates[f] = cl[f];
