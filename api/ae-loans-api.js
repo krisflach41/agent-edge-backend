@@ -630,6 +630,70 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, history: history || [] });
     }
 
+    // ===== GET TEAM MEMBERS =====
+    if (action === 'get_team') {
+      var teamUserId = req.query.user_id || req.body?.user_id;
+      if (!teamUserId) return res.status(400).json({ success: false, message: 'user_id required' });
+
+      const { data: team, error: teamErr } = await supabase
+        .from('lo_team_members')
+        .select('*')
+        .eq('user_id', teamUserId)
+        .order('created_at', { ascending: true });
+
+      if (teamErr) return res.status(500).json({ success: false, message: teamErr.message });
+      return res.status(200).json({ success: true, team: team || [] });
+    }
+
+    // ===== SAVE TEAM MEMBER (INSERT OR UPDATE) =====
+    if (action === 'save_team_member') {
+      var stm = req.body;
+      if (!stm.user_id || !stm.member || !stm.member.name) {
+        return res.status(400).json({ success: false, message: 'user_id and member.name required' });
+      }
+
+      var memberData = {
+        user_id: stm.user_id,
+        name: stm.member.name,
+        role: stm.member.role || 'other',
+        email: stm.member.email || '',
+        phone: stm.member.phone || ''
+      };
+
+      if (stm.member.id) {
+        // Update existing
+        const { data, error } = await supabase
+          .from('lo_team_members')
+          .update(memberData)
+          .eq('id', stm.member.id)
+          .select();
+        if (error) return res.status(500).json({ success: false, message: error.message });
+        return res.status(200).json({ success: true, member: data?.[0] });
+      } else {
+        // Insert new
+        const { data, error } = await supabase
+          .from('lo_team_members')
+          .insert(memberData)
+          .select();
+        if (error) return res.status(500).json({ success: false, message: error.message });
+        return res.status(200).json({ success: true, member: data?.[0] });
+      }
+    }
+
+    // ===== DELETE TEAM MEMBER =====
+    if (action === 'delete_team_member') {
+      var dtm = req.body;
+      if (!dtm.member_id) return res.status(400).json({ success: false, message: 'member_id required' });
+
+      const { error: delErr } = await supabase
+        .from('lo_team_members')
+        .delete()
+        .eq('id', dtm.member_id);
+
+      if (delErr) return res.status(500).json({ success: false, message: delErr.message });
+      return res.status(200).json({ success: true });
+    }
+
     return res.status(400).json({ success: false, message: 'Unknown action: ' + action });
 
   } catch (err) {
