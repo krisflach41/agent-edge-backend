@@ -164,7 +164,7 @@ export default async function handler(req, res) {
         'loan_program', 'loan_amount', 'appraised_value', 'interest_rate', 'lock_status',
         'occupancy', 'subject_street', 'subject_city', 'subject_state', 'subject_zip',
         'source', 'realtor_name', 'date_mutual', 'date_emd', 'date_appraisal',
-        'date_inspection', 'date_conditional', 'date_final_approval', 'date_closing',
+        'date_inspection', 'date_conditional', 'date_ctc', 'date_final_cd', 'date_closing',
         'strike_rate', 'notes'];
       fields.forEach(function(f) {
         if (cl[f] !== undefined) updates[f] = cl[f];
@@ -478,8 +478,8 @@ export default async function handler(req, res) {
           dates: {
             mutual: loan.date_mutual, emd: loan.date_emd,
             appraisal: loan.date_appraisal, inspection: loan.date_inspection,
-            conditional: loan.date_conditional, final_approval: loan.date_final_approval,
-            closing: loan.date_closing
+            conditional: loan.date_conditional, ctc: loan.date_ctc,
+            final_cd: loan.date_final_cd, closing: loan.date_closing
           },
           notes: cl.notes || null,
           created_at: now,
