@@ -21,6 +21,14 @@
     {
       "path": "/api/cron-trial-reminder",
       "schedule": "0 14 * * *"
+    },
+    {
+      "path": "/api/check-alerts?mode=send&schedule=morning",
+      "schedule": "0 12 * * 1-5"
+    },
+    {
+      "path": "/api/check-alerts?mode=send&schedule=noon",
+      "schedule": "0 17 * * 1-5"
     }
   ]
 }
