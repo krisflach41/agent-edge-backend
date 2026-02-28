@@ -658,7 +658,8 @@ export default async function handler(req, res) {
         role: stm.member.role || 'other',
         email: stm.member.email || '',
         phone: stm.member.phone || '',
-        sms_opt_in: stm.member.sms_opt_in || false
+        sms_opt_in: stm.member.sms_opt_in !== undefined ? stm.member.sms_opt_in : false,
+        alert_date_prefs: stm.member.alert_date_prefs || null
       };
 
       if (stm.member.id) {
