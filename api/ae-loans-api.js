@@ -657,7 +657,8 @@ export default async function handler(req, res) {
         name: stm.member.name,
         role: stm.member.role || 'other',
         email: stm.member.email || '',
-        phone: stm.member.phone || ''
+        phone: stm.member.phone || '',
+        sms_opt_in: stm.member.sms_opt_in || false
       };
 
       if (stm.member.id) {
