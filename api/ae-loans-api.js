@@ -694,6 +694,97 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true });
     }
 
+    // ===== GET TASKS FOR A LOAN =====
+    if (action === 'get_tasks') {
+      var taskAeId = req.query.ae_id || req.body?.ae_id;
+      if (!taskAeId) return res.status(400).json({ success: false, message: 'ae_id required' });
+
+      const { data: tasks, error: taskErr } = await supabase
+        .from('ae_loan_tasks')
+        .select('*')
+        .eq('ae_id', taskAeId)
+        .order('created_at', { ascending: true });
+
+      if (taskErr) return res.status(500).json({ success: false, message: taskErr.message });
+      return res.status(200).json({ success: true, tasks: tasks || [] });
+    }
+
+    // ===== SAVE TASK (INSERT OR UPDATE) =====
+    if (action === 'save_task') {
+      var st = req.body;
+      if (!st.ae_id || !st.task) return res.status(400).json({ success: false, message: 'ae_id and task required' });
+
+      var taskData = {
+        ae_id: st.ae_id,
+        task_id: st.task.task_id || st.task.id || ('task-' + Date.now()),
+        title: st.task.title || '',
+        assignee: st.task.assignee || '',
+        due: st.task.due || null,
+        done: st.task.done || false,
+        alarm: st.task.alarm || false,
+        from_date: st.task.fromDate || st.task.from_date || ''
+      };
+
+      if (st.task.db_id) {
+        // Update existing
+        const { data, error } = await supabase
+          .from('ae_loan_tasks')
+          .update(taskData)
+          .eq('id', st.task.db_id)
+          .select();
+        if (error) return res.status(500).json({ success: false, message: error.message });
+        return res.status(200).json({ success: true, task: data?.[0] });
+      } else {
+        // Insert new
+        const { data, error } = await supabase
+          .from('ae_loan_tasks')
+          .insert(taskData)
+          .select();
+        if (error) return res.status(500).json({ success: false, message: error.message });
+        return res.status(200).json({ success: true, task: data?.[0] });
+      }
+    }
+
+    // ===== DELETE TASK =====
+    if (action === 'delete_task') {
+      var dt = req.body;
+      if (!dt.db_id) return res.status(400).json({ success: false, message: 'db_id required' });
+
+      const { error: dtErr } = await supabase
+        .from('ae_loan_tasks')
+        .delete()
+        .eq('id', dt.db_id);
+
+      if (dtErr) return res.status(500).json({ success: false, message: dtErr.message });
+      return res.status(200).json({ success: true });
+    }
+
+    // ===== BULK GET TASKS FOR MULTIPLE LOANS (for dashboard alerts) =====
+    if (action === 'get_all_tasks') {
+      var userId = req.query.user_id || req.body?.user_id;
+      if (!userId) return res.status(400).json({ success: false, message: 'user_id required' });
+
+      // Get all active loan ae_ids for this user first
+      const { data: userLoans } = await supabase
+        .from('ae_loans')
+        .select('ae_id')
+        .eq('user_id', userId)
+        .eq('status', 'active');
+
+      var loanIds = (userLoans || []).map(function(l) { return l.ae_id; });
+      if (loanIds.length === 0) return res.status(200).json({ success: true, tasks: [] });
+
+      const { data: allTasks, error: atErr } = await supabase
+        .from('ae_loan_tasks')
+        .select('*')
+        .in('ae_id', loanIds)
+        .eq('done', false)
+        .order('due', { ascending: true });
+
+      if (atErr) return res.status(500).json({ success: false, message: atErr.message });
+      return res.status(200).json({ success: true, tasks: allTasks || [] });
+    }
+
     return res.status(400).json({ success: false, message: 'Unknown action: ' + action });
 
   } catch (err) {
