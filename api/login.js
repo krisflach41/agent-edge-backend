@@ -112,7 +112,8 @@ export default async function handler(req, res) {
       role: user.role || 'trial',
       trialStart: user.trial_start_date || '',
       hasHeadshot: hasHeadshot,
-      lenderName: lenderName
+      lenderName: lenderName,
+      loUserId: user.lo_user_id || 'default'
     });
 
   } catch (error) {
