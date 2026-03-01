@@ -37,6 +37,10 @@
     {
       "path": "/api/cron-drips",
       "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/cron-birthday",
+      "schedule": "0 12 * * *"
     }
   ]
 }
