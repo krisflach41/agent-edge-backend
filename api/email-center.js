@@ -279,6 +279,63 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true });
     }
 
+    if (action === 'upcoming_sends') {
+      var sevenDays = new Date(Date.now() + 7 * 86400000).toISOString();
+      const { data, error } = await supabase
+        .from('ae_drip_enrollments')
+        .select('*, ae_drip_campaigns(name)')
+        .eq('lo_user_id', loUserId)
+        .eq('status', 'active')
+        .not('next_send_at', 'is', null)
+        .lte('next_send_at', sevenDays)
+        .order('next_send_at', { ascending: true })
+        .limit(10);
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      var upcoming = (data || []).map(function(e) {
+        return {
+          contact_email: e.contact_email,
+          contact_name: e.contact_name,
+          current_step: e.current_step,
+          next_send_at: e.next_send_at,
+          campaign_name: e.ae_drip_campaigns ? e.ae_drip_campaigns.name : ''
+        };
+      });
+      return res.status(200).json({ success: true, upcoming: upcoming });
+    }
+
+    if (action === 'total_enrolled') {
+      const { count, error } = await supabase
+        .from('ae_drip_enrollments')
+        .select('*', { count: 'exact', head: true })
+        .eq('lo_user_id', loUserId)
+        .eq('status', 'active');
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true, total: count || 0 });
+    }
+
+    if (action === 'resume_enrollment') {
+      var rid = req.body.enrollment_id;
+      if (!rid) return res.status(400).json({ success: false, message: 'enrollment_id required' });
+      var nextSendAt = new Date(Date.now() + 86400000).toISOString();
+      const { error } = await supabase
+        .from('ae_drip_enrollments')
+        .update({ status: 'active', next_send_at: nextSendAt })
+        .eq('id', rid);
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true });
+    }
+
+    if (action === 'remove_enrollment') {
+      var rmid = req.body.enrollment_id;
+      if (!rmid) return res.status(400).json({ success: false, message: 'enrollment_id required' });
+      const { error } = await supabase
+        .from('ae_drip_enrollments')
+        .delete()
+        .eq('id', rmid);
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true });
+    }
+
     // =====================
     // EMAIL LOG / STATS
     // =====================
