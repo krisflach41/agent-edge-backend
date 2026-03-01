@@ -1,0 +1,536 @@
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
+
+export default async function handler(req, res) {
+  var origin = req.headers.origin || '';
+  var allowedOrigins = ['https://kristyflach.com', 'https://kristyflach41.github.io', 'https://agent-edge-backend.vercel.app'];
+  if (allowedOrigins.indexOf(origin) !== -1) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', 'https://kristyflach.com');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') return res.status(200).end();
+
+  try {
+    var action = req.method === 'GET' ? (req.query.action || '') : (req.body.action || '');
+    var loUserId = req.method === 'GET' ? (req.query.lo_user_id || 'default') : (req.body.lo_user_id || 'default');
+
+    // =====================
+    // TEMPLATES
+    // =====================
+
+    if (action === 'list_templates') {
+      const { data, error } = await supabase
+        .from('ae_email_templates')
+        .select('*')
+        .eq('lo_user_id', loUserId)
+        .eq('is_active', true)
+        .order('created_at', { ascending: false });
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true, templates: data || [] });
+    }
+
+    if (action === 'save_template') {
+      var t = req.body.template;
+      if (!t || !t.name || !t.subject || !t.body_html) {
+        return res.status(400).json({ success: false, message: 'name, subject, body_html required' });
+      }
+      var templateData = {
+        lo_user_id: loUserId,
+        name: t.name,
+        subject: t.subject,
+        body_html: t.body_html,
+        category: t.category || 'custom',
+        tags: t.tags || '',
+        updated_at: new Date().toISOString()
+      };
+
+      if (t.id) {
+        const { data, error } = await supabase
+          .from('ae_email_templates')
+          .update(templateData)
+          .eq('id', t.id)
+          .select();
+        if (error) return res.status(500).json({ success: false, message: error.message });
+        return res.status(200).json({ success: true, template: data?.[0] });
+      } else {
+        const { data, error } = await supabase
+          .from('ae_email_templates')
+          .insert(templateData)
+          .select();
+        if (error) return res.status(500).json({ success: false, message: error.message });
+        return res.status(200).json({ success: true, template: data?.[0] });
+      }
+    }
+
+    if (action === 'delete_template') {
+      var tid = req.body.template_id;
+      if (!tid) return res.status(400).json({ success: false, message: 'template_id required' });
+      const { error } = await supabase
+        .from('ae_email_templates')
+        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .eq('id', tid);
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true });
+    }
+
+    // =====================
+    // CAMPAIGNS
+    // =====================
+
+    if (action === 'list_campaigns') {
+      const { data: campaigns, error } = await supabase
+        .from('ae_drip_campaigns')
+        .select('*')
+        .eq('lo_user_id', loUserId)
+        .order('created_at', { ascending: false });
+      if (error) return res.status(500).json({ success: false, message: error.message });
+
+      // Get steps for each campaign
+      var campIds = (campaigns || []).map(function(c) { return c.id; });
+      var allSteps = [];
+      if (campIds.length > 0) {
+        const { data: steps } = await supabase
+          .from('ae_drip_steps')
+          .select('*')
+          .in('campaign_id', campIds)
+          .order('step_order', { ascending: true });
+        allSteps = steps || [];
+      }
+
+      // Get enrollment counts
+      var enriched = (campaigns || []).map(function(c) {
+        c.steps = allSteps.filter(function(s) { return s.campaign_id === c.id; });
+        return c;
+      });
+
+      return res.status(200).json({ success: true, campaigns: enriched });
+    }
+
+    if (action === 'get_campaign') {
+      var cid = req.query?.campaign_id || req.body?.campaign_id;
+      if (!cid) return res.status(400).json({ success: false, message: 'campaign_id required' });
+
+      const { data: campaign, error } = await supabase
+        .from('ae_drip_campaigns')
+        .select('*')
+        .eq('id', cid)
+        .single();
+      if (error) return res.status(500).json({ success: false, message: error.message });
+
+      const { data: steps } = await supabase
+        .from('ae_drip_steps')
+        .select('*')
+        .eq('campaign_id', cid)
+        .order('step_order', { ascending: true });
+
+      const { data: enrollments } = await supabase
+        .from('ae_drip_enrollments')
+        .select('*')
+        .eq('campaign_id', cid)
+        .order('enrolled_at', { ascending: false });
+
+      campaign.steps = steps || [];
+      campaign.enrollments = enrollments || [];
+      return res.status(200).json({ success: true, campaign: campaign });
+    }
+
+    if (action === 'save_campaign') {
+      var c = req.body.campaign;
+      if (!c || !c.name) return res.status(400).json({ success: false, message: 'campaign name required' });
+
+      var campData = {
+        lo_user_id: loUserId,
+        name: c.name,
+        description: c.description || '',
+        trigger_type: c.trigger_type || 'manual',
+        status: c.status || 'draft',
+        updated_at: new Date().toISOString()
+      };
+
+      var campId;
+      if (c.id) {
+        const { data, error } = await supabase
+          .from('ae_drip_campaigns')
+          .update(campData)
+          .eq('id', c.id)
+          .select();
+        if (error) return res.status(500).json({ success: false, message: error.message });
+        campId = c.id;
+      } else {
+        const { data, error } = await supabase
+          .from('ae_drip_campaigns')
+          .insert(campData)
+          .select();
+        if (error) return res.status(500).json({ success: false, message: error.message });
+        campId = data?.[0]?.id;
+      }
+
+      // Save steps (delete old, insert new)
+      if (c.steps && Array.isArray(c.steps)) {
+        await supabase.from('ae_drip_steps').delete().eq('campaign_id', campId);
+        var stepRows = c.steps.map(function(s, i) {
+          return {
+            campaign_id: campId,
+            step_order: i + 1,
+            delay_days: s.delay_days || 0,
+            template_id: s.template_id || null,
+            subject_override: s.subject_override || '',
+            body_override: s.body_override || ''
+          };
+        });
+        if (stepRows.length > 0) {
+          const { error: stepErr } = await supabase.from('ae_drip_steps').insert(stepRows);
+          if (stepErr) console.error('Step save error:', stepErr);
+        }
+      }
+
+      return res.status(200).json({ success: true, campaign_id: campId });
+    }
+
+    if (action === 'delete_campaign') {
+      var dcid = req.body.campaign_id;
+      if (!dcid) return res.status(400).json({ success: false, message: 'campaign_id required' });
+      // Cascade deletes steps and enrollments
+      const { error } = await supabase.from('ae_drip_campaigns').delete().eq('id', dcid);
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true });
+    }
+
+    if (action === 'toggle_campaign') {
+      var tcid = req.body.campaign_id;
+      var newStatus = req.body.status; // 'active' or 'paused'
+      if (!tcid || !newStatus) return res.status(400).json({ success: false, message: 'campaign_id and status required' });
+      const { error } = await supabase
+        .from('ae_drip_campaigns')
+        .update({ status: newStatus, updated_at: new Date().toISOString() })
+        .eq('id', tcid);
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true });
+    }
+
+    // =====================
+    // ENROLLMENTS
+    // =====================
+
+    if (action === 'enroll') {
+      var e = req.body;
+      if (!e.campaign_id || !e.contact_email) {
+        return res.status(400).json({ success: false, message: 'campaign_id and contact_email required' });
+      }
+
+      // Check not already enrolled
+      const { data: existing } = await supabase
+        .from('ae_drip_enrollments')
+        .select('id')
+        .eq('campaign_id', e.campaign_id)
+        .eq('contact_email', e.contact_email.toLowerCase())
+        .eq('status', 'active')
+        .maybeSingle();
+
+      if (existing) {
+        return res.status(200).json({ success: true, message: 'Already enrolled', enrollment_id: existing.id });
+      }
+
+      // Get first step to calculate next_send_at
+      const { data: firstStep } = await supabase
+        .from('ae_drip_steps')
+        .select('delay_days')
+        .eq('campaign_id', e.campaign_id)
+        .order('step_order', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      var delayMs = (firstStep?.delay_days || 0) * 86400000;
+      var nextSend = new Date(Date.now() + delayMs).toISOString();
+
+      const { data: enrollment, error } = await supabase
+        .from('ae_drip_enrollments')
+        .insert({
+          campaign_id: e.campaign_id,
+          lo_user_id: loUserId,
+          contact_email: e.contact_email.toLowerCase(),
+          contact_name: e.contact_name || '',
+          current_step: 0,
+          status: 'active',
+          next_send_at: nextSend
+        })
+        .select();
+
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true, enrollment: enrollment?.[0] });
+    }
+
+    if (action === 'unenroll') {
+      var uid = req.body.enrollment_id;
+      if (!uid) return res.status(400).json({ success: false, message: 'enrollment_id required' });
+      const { error } = await supabase
+        .from('ae_drip_enrollments')
+        .update({ status: 'paused' })
+        .eq('id', uid);
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true });
+    }
+
+    // =====================
+    // EMAIL LOG / STATS
+    // =====================
+
+    if (action === 'email_stats') {
+      var now = new Date();
+      var monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
+      const { data: logs, error } = await supabase
+        .from('ae_email_log')
+        .select('status, opened_at')
+        .eq('lo_user_id', loUserId)
+        .gte('sent_at', monthStart);
+
+      if (error) return res.status(500).json({ success: false, message: error.message });
+
+      var total = (logs || []).length;
+      var opened = (logs || []).filter(function(l) { return l.opened_at; }).length;
+      var openRate = total > 0 ? Math.round((opened / total) * 100) : 0;
+
+      return res.status(200).json({
+        success: true,
+        stats: { sent_this_month: total, open_rate: openRate, opened: opened }
+      });
+    }
+
+    if (action === 'email_history') {
+      var limit = parseInt(req.query?.limit || req.body?.limit || '50');
+      const { data, error } = await supabase
+        .from('ae_email_log')
+        .select('*')
+        .eq('lo_user_id', loUserId)
+        .order('sent_at', { ascending: false })
+        .limit(limit);
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true, emails: data || [] });
+    }
+
+    // =====================
+    // SEND ONE-OFF EMAIL
+    // =====================
+
+    if (action === 'send_now') {
+      var s = req.body;
+      if (!s.to || !s.subject || !s.body_html) {
+        return res.status(400).json({ success: false, message: 'to, subject, body_html required' });
+      }
+
+      var result = await sendEmail(loUserId, s.to, s.to_name || '', s.subject, s.body_html, s.template_id || null, null, null, null);
+      return res.status(result.success ? 200 : 500).json(result);
+    }
+
+    // =====================
+    // PROCESS DRIPS (called by cron)
+    // =====================
+
+    if (action === 'process_drips') {
+      return await processDrips(res);
+    }
+
+    return res.status(400).json({ success: false, message: 'Unknown action: ' + action });
+
+  } catch (err) {
+    console.error('Email Center error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+// ===== SEND EMAIL VIA RESEND =====
+async function sendEmail(loUserId, toEmail, toName, subject, bodyHtml, templateId, campaignId, enrollmentId, stepOrder) {
+  var resendKey = process.env.RESEND_API_KEY;
+  if (!resendKey) return { success: false, message: 'Resend API key not configured' };
+
+  // TODO: For multi-tenant, look up LO's from address and signature from their profile
+  // For now, use Kristy's config
+  var fromAddress = 'Kristy Flach <kflach@kristyflach.com>';
+  var replyTo = 'KFlach@prmg.net';
+
+  // Build full HTML with wrapper
+  var fullHtml = buildEmailWrapper(bodyHtml);
+
+  try {
+    var response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + resendKey,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        from: fromAddress,
+        reply_to: replyTo,
+        to: [toEmail],
+        subject: subject,
+        html: fullHtml
+      })
+    });
+
+    var data = await response.json();
+
+    // Log it
+    try {
+      await supabase.from('ae_email_log').insert({
+        lo_user_id: loUserId,
+        to_email: toEmail,
+        to_name: toName,
+        subject: subject,
+        template_id: templateId,
+        campaign_id: campaignId,
+        enrollment_id: enrollmentId,
+        step_order: stepOrder,
+        resend_id: data.id || '',
+        status: response.ok ? 'sent' : 'failed'
+      });
+    } catch (logErr) {
+      console.error('Email log error:', logErr);
+    }
+
+    if (!response.ok) {
+      return { success: false, message: data.message || 'Send failed' };
+    }
+    return { success: true, resend_id: data.id };
+
+  } catch (err) {
+    return { success: false, message: err.message };
+  }
+}
+
+// ===== PROCESS DRIP CAMPAIGNS =====
+async function processDrips(res) {
+  try {
+    var now = new Date().toISOString();
+
+    // Get all enrollments that are due
+    const { data: due, error } = await supabase
+      .from('ae_drip_enrollments')
+      .select('*, ae_drip_campaigns(status, lo_user_id)')
+      .eq('status', 'active')
+      .lte('next_send_at', now);
+
+    if (error) return res.status(500).json({ success: false, message: error.message });
+    if (!due || due.length === 0) return res.status(200).json({ success: true, processed: 0 });
+
+    var sent = 0;
+
+    for (var i = 0; i < due.length; i++) {
+      var enrollment = due[i];
+
+      // Skip if campaign is paused
+      if (enrollment.ae_drip_campaigns?.status !== 'active') continue;
+
+      var nextStepOrder = enrollment.current_step + 1;
+      var loUserId = enrollment.ae_drip_campaigns?.lo_user_id || enrollment.lo_user_id;
+
+      // Get the next step
+      const { data: step } = await supabase
+        .from('ae_drip_steps')
+        .select('*, ae_email_templates(subject, body_html)')
+        .eq('campaign_id', enrollment.campaign_id)
+        .eq('step_order', nextStepOrder)
+        .maybeSingle();
+
+      if (!step) {
+        // No more steps — mark complete
+        await supabase.from('ae_drip_enrollments')
+          .update({ status: 'completed', completed_at: now })
+          .eq('id', enrollment.id);
+        continue;
+      }
+
+      // Get subject and body (override or template)
+      var subject = step.subject_override || step.ae_email_templates?.subject || 'Message from your Loan Officer';
+      var bodyHtml = step.body_override || step.ae_email_templates?.body_html || '';
+
+      if (!bodyHtml) continue;
+
+      // Personalize
+      subject = personalize(subject, enrollment.contact_name, enrollment.contact_email);
+      bodyHtml = personalize(bodyHtml, enrollment.contact_name, enrollment.contact_email);
+
+      // Send
+      var result = await sendEmail(
+        loUserId,
+        enrollment.contact_email,
+        enrollment.contact_name,
+        subject,
+        bodyHtml,
+        step.template_id,
+        enrollment.campaign_id,
+        enrollment.id,
+        nextStepOrder
+      );
+
+      if (result.success) {
+        // Get next step to calculate next_send_at
+        const { data: nextStep } = await supabase
+          .from('ae_drip_steps')
+          .select('delay_days')
+          .eq('campaign_id', enrollment.campaign_id)
+          .eq('step_order', nextStepOrder + 1)
+          .maybeSingle();
+
+        var nextSendAt = null;
+        if (nextStep) {
+          nextSendAt = new Date(Date.now() + (nextStep.delay_days || 1) * 86400000).toISOString();
+        }
+
+        await supabase.from('ae_drip_enrollments')
+          .update({
+            current_step: nextStepOrder,
+            last_sent_at: now,
+            next_send_at: nextSendAt,
+            status: nextStep ? 'active' : 'completed',
+            completed_at: nextStep ? null : now
+          })
+          .eq('id', enrollment.id);
+
+        sent++;
+      }
+    }
+
+    return res.status(200).json({ success: true, processed: due.length, sent: sent });
+
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+// ===== PERSONALIZATION =====
+function personalize(text, name, email) {
+  var firstName = (name || '').split(' ')[0] || 'there';
+  return text
+    .replace(/\{\{name\}\}/g, name || 'there')
+    .replace(/\{\{first_name\}\}/g, firstName)
+    .replace(/\{\{email\}\}/g, email || '');
+}
+
+// ===== EMAIL WRAPPER =====
+function buildEmailWrapper(bodyHtml) {
+  return '<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>' +
+    '<body style="font-family: Arial, Helvetica, sans-serif; color: #333333; margin: 0; padding: 20px; background-color: #f9f9f9;">' +
+    '<table cellpadding="0" cellspacing="0" border="0" style="max-width: 600px; margin: 0 auto; background: #ffffff; padding: 30px; border-radius: 4px;">' +
+    '<tr><td>' +
+    '<div style="font-size: 14px; line-height: 1.6; color: #333333; padding-bottom: 24px; border-bottom: 1px solid #eeeeee; margin-bottom: 20px;">' +
+    bodyHtml +
+    '</div>' +
+    // Security notice
+    '<table cellpadding="0" cellspacing="0" border="0"><tr>' +
+    '<td style="border-left: 3px solid #dddddd; padding: 8px 12px; font-size: 11px; line-height: 16px; color: #888888;">' +
+    'This message was sent from a marketing platform. For your security, please do not include personal financial information (SSN, account numbers, tax documents) in replies.' +
+    '</td></tr></table>' +
+    '<div style="margin-top: 16px; font-size: 11px; color: #999999; text-align: center;">' +
+    '<a href="{{unsubscribe_url}}" style="color: #999999;">Unsubscribe</a>' +
+    '</div>' +
+    '</td></tr></table></body></html>';
+}
