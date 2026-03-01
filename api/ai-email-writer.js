@@ -16,51 +16,48 @@ export default async function handler(req, res) {
     var { prompt, tone } = req.body;
     if (!prompt) return res.status(400).json({ success: false, message: 'prompt required' });
 
-    var apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) return res.status(500).json({ success: false, message: 'OpenAI API key not configured' });
+    var apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return res.status(500).json({ success: false, message: 'Anthropic API key not configured' });
 
-    var systemPrompt = `You are an email copywriter for a mortgage loan officer. You write emails that go to real estate agents (realtors) and clients.
+    var systemPrompt = 'You are an email copywriter for a mortgage loan officer. You write emails that go to real estate agents (realtors) and clients.\n\n' +
+      'RULES:\n' +
+      '- Write the email body ONLY — do NOT include "Hi {{first_name}}," at the start (that is added automatically)\n' +
+      '- Do NOT include a sign-off like "Best regards, Kristy" (signature is added automatically)\n' +
+      '- Output clean HTML using <p> tags for paragraphs\n' +
+      '- Keep it concise: 3-5 short paragraphs max\n' +
+      '- Tone: ' + (tone || 'warm and professional') + '\n' +
+      '- Use simple, genuine language — never salesy or pushy\n' +
+      '- Include a soft call-to-action where appropriate\n' +
+      '- Do NOT include subject line in the body\n\n' +
+      'Also provide a short, compelling subject line (WITHOUT "Hi" or the recipient name — just the greeting part that comes BEFORE ", {{first_name}}!")\n\n' +
+      'Respond in this exact JSON format only, no markdown backticks, no preamble:\n' +
+      '{"subject": "Your subject here", "body_html": "<p>Your email body here</p>"}';
 
-RULES:
-- Write the email body ONLY — do NOT include "Hi {{first_name}}," at the start (that's added automatically)
-- Do NOT include a sign-off like "Best regards, Kristy" (signature is added automatically)
-- Output clean HTML using <p> tags for paragraphs
-- Keep it concise: 3-5 short paragraphs max
-- Tone: ${tone || 'warm and professional'}
-- Use simple, genuine language — never salesy or pushy
-- Include a soft call-to-action where appropriate
-- Do NOT include subject line in the body
-
-Also provide a short, compelling subject line (WITHOUT "Hi" or the recipient name — just the greeting part that comes BEFORE ", {{first_name}}!")
-
-Respond in this exact JSON format only, no markdown:
-{"subject": "Your subject here", "body_html": "<p>Your email body here</p>"}`;
-
-    var response = await fetch('https://api.openai.com/v1/chat/completions', {
+    var response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
-        'Authorization': 'Bearer ' + apiKey,
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 800,
+        system: systemPrompt,
         messages: [
-          { role: 'system', content: systemPrompt },
           { role: 'user', content: prompt }
-        ],
-        temperature: 0.7,
-        max_tokens: 800
+        ]
       })
     });
 
     var data = await response.json();
 
     if (!response.ok) {
-      console.error('OpenAI error:', data);
+      console.error('Anthropic error:', data);
       return res.status(500).json({ success: false, message: data.error?.message || 'AI generation failed' });
     }
 
-    var text = data.choices?.[0]?.message?.content || '';
+    var text = (data.content && data.content[0] && data.content[0].text) || '';
     // Clean up any markdown fencing
     text = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
 
@@ -72,7 +69,7 @@ Respond in this exact JSON format only, no markdown:
         body_html: parsed.body_html || ''
       });
     } catch (parseErr) {
-      // If AI didn't return valid JSON, try to extract content
+      // If AI didn't return valid JSON, wrap as HTML
       return res.status(200).json({
         success: true,
         subject: '',
