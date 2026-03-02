@@ -57,6 +57,7 @@ export default async function handler(req, res) {
         borrower_email: b.borrower_email || null,
         borrower_phone: b.borrower_phone || null,
         self_reported_score: b.self_reported_score || null,
+        goal_score: b.goal_score || null,
         situation_notes: b.situation_notes || null,
         simulations_ran: b.simulations_ran || null,
         submitted_by: b.submitted_by || 'direct',
@@ -99,7 +100,7 @@ export default async function handler(req, res) {
           crm_id: existingContact.id,
           type: 'note',
           date: new Date().toISOString(),
-          summary: 'Credit simulator submission received. Self-reported score: ' + (b.self_reported_score || 'N/A') + '. ' + (b.situation_notes || '')
+          summary: 'Credit simulator submission received. Self-reported score: ' + (b.self_reported_score || 'N/A') + '. Goal: ' + (b.goal_score || 'N/A') + '. ' + (b.situation_notes || '')
         });
 
       } else if (b.borrower_name) {
@@ -113,7 +114,7 @@ export default async function handler(req, res) {
           source: b.submitted_by === 'realtor' ? 'Realtor Portal - Credit Simulator' : 'Credit Simulator',
           tags: 'credit-repair',
           pipeline_stage: 'credit',
-          notes: 'Auto-created from credit simulator submission. Score: ' + (b.self_reported_score || 'N/A') + '. ' + (b.situation_notes || ''),
+          notes: 'Auto-created from credit simulator submission. Score: ' + (b.self_reported_score || 'N/A') + '. Goal: ' + (b.goal_score || 'N/A') + '. ' + (b.situation_notes || ''),
           realtor_name: b.realtor_name || null,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
