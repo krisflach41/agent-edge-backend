@@ -1,7 +1,6 @@
 // /api/credit-submission.js
 // Receives credit simulator submissions from realtor portal or direct borrower use
-// Auto-creates CRM contact in Credit Repair pipeline stage
-// Auto-enrolls in credit_repair drip campaign
+// Saves to credit_submissions table only - CRM card creation is LO-initiated from Mission Control
 
 export default async function handler(req, res) {
   var origin = req.headers.origin || '';
@@ -50,7 +49,6 @@ export default async function handler(req, res) {
 
       var submissionId = 'cs-' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
 
-      // Save submission
       var submission = {
         id: submissionId,
         borrower_name: b.borrower_name,
@@ -63,6 +61,7 @@ export default async function handler(req, res) {
         submitted_by: b.submitted_by || 'direct',
         realtor_id: b.realtor_id || null,
         realtor_name: b.realtor_name || null,
+        realtor_email: b.realtor_email || null,
         status: 'new',
         lo_notes: null,
         created_at: new Date().toISOString(),
@@ -71,88 +70,9 @@ export default async function handler(req, res) {
 
       await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/credit_submissions', 'POST', submission);
 
-      // Auto-create CRM contact in Credit Repair stage
-      var crmId = 'crm-' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
-      var contactEmail = (b.borrower_email || '').toLowerCase();
-
-      // Check if contact already exists by email
-      var existingContact = null;
-      if (contactEmail) {
-        var existing = await supaGet(SUPABASE_URL, SUPABASE_KEY,
-          '/rest/v1/crm_contacts?email=eq.' + encodeURIComponent(contactEmail) + '&limit=1');
-        if (existing && existing.length > 0) existingContact = existing[0];
-      }
-
-      if (existingContact) {
-        // Update existing contact — move to credit repair if not already in pipeline
-        if (!existingContact.pipeline_status || existingContact.pipeline_status === '') {
-          await supaFetch(SUPABASE_URL, SUPABASE_KEY,
-            '/rest/v1/crm_contacts?id=eq.' + existingContact.id, 'PATCH', {
-              pipeline_status: 'credit',
-              tags: existingContact.tags ? existingContact.tags + ',credit-repair' : 'credit-repair',
-              updated_at: new Date().toISOString()
-            });
-        }
-        crmId = existingContact.id;
-
-        // Add activity note
-        await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_activity', 'POST', {
-          crm_id: existingContact.id,
-          type: 'note',
-          date: new Date().toISOString(),
-          summary: 'Credit simulator submission received. Self-reported score: ' + (b.self_reported_score || 'N/A') + '. Goal: ' + (b.goal_score || 'N/A') + '. ' + (b.situation_notes || '')
-        });
-
-      } else if (b.borrower_name) {
-        // Create new CRM contact
-        var newContact = {
-          id: crmId,
-          name: b.borrower_name,
-          email: contactEmail || null,
-          phone: b.borrower_phone || null,
-          type: 'borrower',
-          source: b.submitted_by === 'realtor' ? 'Realtor Portal - Credit Simulator' : 'Credit Simulator',
-          tags: 'credit-repair',
-          pipeline_status: 'credit',
-          notes: 'Auto-created from credit simulator submission. Score: ' + (b.self_reported_score || 'N/A') + '. Goal: ' + (b.goal_score || 'N/A') + '. ' + (b.situation_notes || ''),
-          realtor_name: b.realtor_name || null,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        };
-        await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts', 'POST', newContact);
-
-        // Add activity
-        await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_activity', 'POST', {
-          crm_id: crmId,
-          type: 'note',
-          date: new Date().toISOString(),
-          summary: 'New contact created from credit simulator. Self-reported score: ' + (b.self_reported_score || 'N/A')
-        });
-      }
-
-      // Auto-enroll in credit repair drip campaign
-      if (contactEmail) {
-        try {
-          await fetch('https://agent-edge-backend.vercel.app/api/auto-enroll', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              trigger: 'credit_repair',
-              contact_email: contactEmail,
-              contact_name: b.borrower_name,
-              lo_user_id: 'default'
-            })
-          });
-        } catch (enrollErr) {
-          console.error('Auto-enroll failed:', enrollErr);
-          // Non-fatal — submission still succeeds
-        }
-      }
-
       return res.status(200).json({
         success: true,
         id: submissionId,
-        crm_id: crmId,
         message: 'Submission received'
       });
 
