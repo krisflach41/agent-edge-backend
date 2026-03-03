@@ -85,10 +85,10 @@ export default async function handler(req, res) {
 
       if (existingContact) {
         // Update existing contact — move to credit repair if not already in pipeline
-        if (!existingContact.pipeline_id || existingContact.pipeline_id === '') {
+        if (!existingContact.pipeline_status || existingContact.pipeline_status === '') {
           await supaFetch(SUPABASE_URL, SUPABASE_KEY,
             '/rest/v1/crm_contacts?id=eq.' + existingContact.id, 'PATCH', {
-              pipeline_stage: 'credit',
+              pipeline_status: 'credit',
               tags: existingContact.tags ? existingContact.tags + ',credit-repair' : 'credit-repair',
               updated_at: new Date().toISOString()
             });
@@ -113,7 +113,7 @@ export default async function handler(req, res) {
           type: 'borrower',
           source: b.submitted_by === 'realtor' ? 'Realtor Portal - Credit Simulator' : 'Credit Simulator',
           tags: 'credit-repair',
-          pipeline_stage: 'credit',
+          pipeline_status: 'credit',
           notes: 'Auto-created from credit simulator submission. Score: ' + (b.self_reported_score || 'N/A') + '. Goal: ' + (b.goal_score || 'N/A') + '. ' + (b.situation_notes || ''),
           realtor_name: b.realtor_name || null,
           created_at: new Date().toISOString(),
