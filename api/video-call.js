@@ -24,7 +24,7 @@ export default async function handler(req, res) {
     // CREATE ROOM - LO starts a call
     if (action === 'create-room') {
       var loName = req.body.lo_name || 'Loan Officer';
-      var roomCode = 'CALL-' + Math.floor(1000 + Math.random() * 9000);
+      var roomCode = '' + Math.floor(10000 + Math.random() * 90000);
 
       var resp = await fetch(SUPABASE_URL + '/rest/v1/video_rooms', {
         method: 'POST',
