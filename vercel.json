@@ -1,5 +1,19 @@
 {
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "https://kristyflach.com" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET, POST, OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type, x-admin-key" }
+      ]
+    }
+  ],
   "functions": {
+    "api/blog-api.js": {
+      "memory": 1024,
+      "maxDuration": 60
+    },
     "api/parse-briefing.js": {
       "memory": 1024,
       "maxDuration": 60
