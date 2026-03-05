@@ -23,7 +23,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   var SUPABASE_URL = process.env.SUPABASE_URL;
-  var SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  var SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
   var headers = {
     'apikey': SUPABASE_KEY,
     'Authorization': 'Bearer ' + SUPABASE_KEY,
