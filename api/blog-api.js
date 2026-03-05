@@ -196,12 +196,18 @@ export default async function handler(req, res) {
       if (action === 'ai-polish') {
         var text = body.text;
         if (!text) return res.status(400).json({ error: 'text required' });
+        var instructions = body.instructions || '';
 
         var apiKey = process.env.ANTHROPIC_API_KEY;
         if (!apiKey) return res.status(500).json({ error: 'Anthropic API key not configured' });
 
         var systemPrompt = 'You are editing a blog post for Kristy Flach, a Certified Mortgage Advisor. Polish the writing to be professional, clear, and engaging. Fix grammar, improve flow, and strengthen the educational value. Keep the same voice and meaning.\n\n' +
           'Return ONLY the polished text in HTML format (use <h3>, <p>, <ul>, <li>, <strong>, <em> tags). No preamble, no explanation.';
+
+        var userMessage = 'Polish this blog post:\n\n' + text;
+        if (instructions) {
+          userMessage = 'Rewrite this blog post with the following specific instructions: ' + instructions + '\n\nHere is the post to rewrite:\n\n' + text;
+        }
 
         var aiResp = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
@@ -213,7 +219,7 @@ export default async function handler(req, res) {
           body: JSON.stringify({
             model: 'claude-sonnet-4-20250514',
             max_tokens: 2000,
-            messages: [{ role: 'user', content: 'Polish this blog post:\n\n' + text }],
+            messages: [{ role: 'user', content: userMessage }],
             system: systemPrompt
           })
         });
