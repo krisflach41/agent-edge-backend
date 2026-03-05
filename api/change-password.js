@@ -8,7 +8,13 @@ const supabase = createClient(
 
 export default async function handler(req, res) {
   // Enable CORS
-  res.setHeader('Access-Control-Allow-Origin', 'https://kristyflach.com');
+  var origin = req.headers.origin || '';
+  var allowedOrigins = ['https://kristyflach.com', 'https://kristyflach41.github.io'];
+  if (allowedOrigins.indexOf(origin) !== -1) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', 'https://kristyflach.com');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
@@ -43,7 +49,7 @@ export default async function handler(req, res) {
         temp_password: false,
         updated_at: new Date().toISOString()
       })
-      .eq('username', cleanUsername)
+      .eq('email', cleanUsername)
       .select();
 
     if (error) {
