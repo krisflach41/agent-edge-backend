@@ -1,0 +1,237 @@
+// /api/ai-api.js — Central AI endpoint for Agent Edge
+// All AI features across the platform route through here.
+// Kristy's profile, voice, and credentials are defined once.
+//
+// POST { action, ...params }
+//
+// Actions:
+//   blog-draft        { topic }                        → { draft: { title, category, summary, body } }
+//   blog-polish       { text, instructions? }          → { result: html }
+//   video-script      { topic, format, audience }      → { result: string }
+//   video-rewrite     { script, instructions }         → { result: string }
+//   social-caption    { draft, platforms }             → { result: string }
+//   social-hashtags   { caption }                      → { result: string }
+//   credit-letter     { analysis }                     → { result: string }
+//   scenario-response { scenario, context? }           → { result: string }
+//   general           { prompt, instructions? }        → { result: string }
+
+export default async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' });
+
+  const body = req.body;
+  const { action } = body;
+  if (!action) return res.status(400).json({ error: 'action required' });
+
+  // ============================================================
+  // KRISTY'S PROFILE — defined once, used everywhere
+  // ============================================================
+  const KRISTY_PROFILE = `
+You are writing as or for Kristy Flach.
+
+WHO SHE IS:
+Kristy Flach is a Certified Mortgage Advisor (CMA) and Loan Officer at Paramount Residential Mortgage Group (PRMG), NMLS #2632259, licensed in 49 states. She has over 20 years in the mortgage industry including 17 years in underwriting — she knows exactly how to structure files that get approved.
+
+WHAT A CMA IS:
+The Certified Mortgage Advisor designation is the highest standard of excellence for mortgage professionals in the United States. It goes beyond traditional loan officer training and focuses on how mortgage decisions fit into a broader financial picture — personal wealth creation, stock and bond markets, technical market analysis, economic reports, central banking, Federal Reserve policy, and what truly drives interest rates.
+
+HER PLATFORM — AGENT EDGE:
+Kristy built her own SaaS platform called Agent Edge. Her YouTube channel is "House Money with Kristy" — an educational platform for borrowers and realtors.
+
+HER VOICE AND POSITIONING:
+- Educator first — her approach is "edusales." She pulls back the curtain on a complex industry so clients understand, know, and trust what is happening
+- Core mission: help people use their mortgage as a tool to create financial independence
+- She speaks with authority from real experience — she has been on the underwriting side and knows how approvals actually work
+- Explains complex concepts clearly without talking down to people
+- Confident, direct, no fluff — warm but professional
+- Trusted advisor, not a salesperson
+- Write in first person as Kristy ("I", "my clients", "in my experience")
+- Never generic. Never corporate. Always specific and real.
+`.trim();
+
+  try {
+    let systemPrompt = '';
+    let userMessage = '';
+    let maxTokens = 1000;
+    let responseFormat = 'text'; // 'text' or 'json'
+
+    // ============================================================
+    // ACTION ROUTING
+    // ============================================================
+
+    switch (action) {
+
+      // ---- BLOG DRAFT ----
+      case 'blog-draft': {
+        const { topic } = body;
+        if (!topic) return res.status(400).json({ error: 'topic required' });
+        maxTokens = 2000;
+        responseFormat = 'json';
+        systemPrompt = `${KRISTY_PROFILE}
+
+You are writing a blog post for Kristy's website.
+
+OUTPUT FORMAT — return ONLY valid JSON, no markdown, no backticks, no explanation:
+{"title":"...","category":"...","summary":"A 1-2 sentence summary for the blog card on the homepage","body":"The full blog post in HTML format (use <h3>, <p>, <ul>, <li>, <strong>, <em> tags). Aim for 600-900 words."}
+
+Category must be one of: Home Buying, Refinance, Mortgage Strategy, Market Update, Credit & Finance, First-Time Buyers
+Always end with a clear call to action.`;
+        userMessage = `Write a mortgage blog post about: ${topic}`;
+        break;
+      }
+
+      // ---- BLOG POLISH ----
+      case 'blog-polish': {
+        const { text, instructions } = body;
+        if (!text) return res.status(400).json({ error: 'text required' });
+        maxTokens = 2000;
+        systemPrompt = `${KRISTY_PROFILE}
+
+You are polishing a blog post for Kristy's website. Fix grammar, improve flow, strengthen educational value. Keep her voice and meaning.
+Return ONLY the polished text in HTML format (use <h3>, <p>, <ul>, <li>, <strong>, <em> tags). No preamble, no explanation.`;
+        userMessage = instructions
+          ? `Rewrite this blog post with the following instructions: ${instructions}\n\n${text}`
+          : `Polish this blog post:\n\n${text}`;
+        break;
+      }
+
+      // ---- VIDEO SCRIPT ----
+      case 'video-script': {
+        const { topic, format, audience } = body;
+        if (!topic) return res.status(400).json({ error: 'topic required' });
+        maxTokens = 1000;
+        systemPrompt = `${KRISTY_PROFILE}
+
+You are writing a video teleprompter script for Kristy's YouTube channel "House Money with Kristy" and/or social media.
+
+SCRIPT FORMAT RULES:
+- Complete sentences only — no bullet points, no stage directions, no headers
+- Strong hook in the first 5 seconds
+- 2-3 clear key points
+- Specific call to action at the end
+- If discussing rates, loan products, or financial advice, end with: "Rates and terms subject to change. Contact me for your personalized quote. Kristy Flach, NMLS #2632259, Paramount Residential Mortgage Group."
+- Return only the script. No preamble, no explanation.`;
+        userMessage = `Write a ${format || '60-second'} video script for this topic: ${topic}\nAudience: ${audience || 'general'}`;
+        break;
+      }
+
+      // ---- VIDEO REWRITE ----
+      case 'video-rewrite': {
+        const { script, instructions } = body;
+        if (!script || !instructions) return res.status(400).json({ error: 'script and instructions required' });
+        maxTokens = 1000;
+        systemPrompt = `${KRISTY_PROFILE}
+
+You are rewriting a video teleprompter script for Kristy. Keep it as clean teleprompter copy — complete sentences, no bullets, no stage directions. Return only the rewritten script.`;
+        userMessage = `Rewrite this script with the following instructions: ${instructions}\n\n${script}`;
+        break;
+      }
+
+      // ---- SOCIAL CAPTION ----
+      case 'social-caption': {
+        const { draft, platforms } = body;
+        if (!draft) return res.status(400).json({ error: 'draft required' });
+        maxTokens = 500;
+        systemPrompt = `${KRISTY_PROFILE}
+
+You are writing or improving a social media caption for Kristy. Make it engaging, authentic, and professional. Keep her voice — direct, knowledgeable, warm. Return only the caption, no explanation.`;
+        userMessage = `Improve this social media caption for ${platforms || 'Facebook and Instagram'}:\n\n${draft}`;
+        break;
+      }
+
+      // ---- SOCIAL HASHTAGS ----
+      case 'social-hashtags': {
+        const { caption } = body;
+        if (!caption) return res.status(400).json({ error: 'caption required' });
+        maxTokens = 150;
+        systemPrompt = `You generate hashtags for mortgage and real estate social media posts. Return ONLY 8-12 hashtags space-separated on one line. No explanation, no preamble.`;
+        userMessage = `Generate hashtags for this post:\n\n${caption}`;
+        break;
+      }
+
+      // ---- CREDIT LETTER ----
+      case 'credit-letter': {
+        const { analysis } = body;
+        if (!analysis) return res.status(400).json({ error: 'analysis required' });
+        maxTokens = 1500;
+        systemPrompt = `${KRISTY_PROFILE}
+
+You are writing a credit improvement action plan letter for one of Kristy's clients. Be specific, encouraging, and actionable. Use Kristy's direct and knowledgeable voice. Format clearly with sections. Return only the letter.`;
+        userMessage = `Write a credit improvement plan based on this analysis:\n\n${JSON.stringify(analysis)}`;
+        break;
+      }
+
+      // ---- SCENARIO RESPONSE ----
+      case 'scenario-response': {
+        const { scenario, context } = body;
+        if (!scenario) return res.status(400).json({ error: 'scenario required' });
+        maxTokens = 800;
+        systemPrompt = `${KRISTY_PROFILE}
+
+You are helping Kristy respond to a client or realtor scenario. Give a clear, confident, expert response she can use or adapt. Keep her voice — direct, no fluff, trusted advisor. Return only the response.`;
+        userMessage = context
+          ? `Scenario: ${scenario}\n\nAdditional context: ${context}`
+          : `Scenario: ${scenario}`;
+        break;
+      }
+
+      // ---- GENERAL ----
+      case 'general': {
+        const { prompt, instructions } = body;
+        if (!prompt) return res.status(400).json({ error: 'prompt required' });
+        maxTokens = 1000;
+        systemPrompt = `${KRISTY_PROFILE}${instructions ? '\n\n' + instructions : ''}`;
+        userMessage = prompt;
+        break;
+      }
+
+      default:
+        return res.status(400).json({ error: `Unknown action: ${action}` });
+    }
+
+    // ============================================================
+    // CALL ANTHROPIC
+    // ============================================================
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: maxTokens,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }]
+      })
+    });
+
+    const data = await response.json();
+    if (data.error) return res.status(500).json({ error: data.error.message });
+
+    const raw = data.content && data.content[0] ? data.content[0].text.trim() : '';
+
+    if (responseFormat === 'json') {
+      try {
+        const cleaned = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+        const parsed = JSON.parse(cleaned);
+        return res.status(200).json({ success: true, draft: parsed });
+      } catch (e) {
+        return res.status(200).json({ success: true, draft: { title: '', category: 'General', summary: '', body: raw } });
+      }
+    }
+
+    return res.status(200).json({ success: true, result: raw });
+
+  } catch (err) {
+    console.error('ai-api error:', err);
+    return res.status(500).json({ error: 'AI request failed', detail: err.message });
+  }
+}
