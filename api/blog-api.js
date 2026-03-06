@@ -46,10 +46,10 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true, posts: posts });
       }
 
-      // Archive: all published posts
+      // Archive: all published + archived posts (visible on public View All Posts)
       if (action === 'archive') {
         var resp = await fetch(
-          SUPABASE_URL + '/rest/v1/blog_posts?status=eq.published&order=published_at.desc&select=id,title,slug,category,summary,image_url,published_at',
+          SUPABASE_URL + '/rest/v1/blog_posts?status=in.(published,archived)&order=published_at.desc&select=id,title,slug,category,summary,image_url,published_at',
           { headers: headers }
         );
         var posts = await resp.json();
