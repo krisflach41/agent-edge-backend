@@ -21,6 +21,8 @@ export default async function handler(req, res) {
     prompt = `Generate 8-12 relevant hashtags for this mortgage/real estate social media post. Return ONLY the hashtags space-separated on one line, no explanation, no preamble:\n\n${topic}`;
   } else if (type === 'caption') {
     prompt = `Improve this social media caption for Kristy Flach, a Certified Mortgage Advisor (NMLS #2632259) at Paramount Residential Mortgage Group. Platform(s): ${audience}. Make it engaging, professional, and authentic. Keep her voice — direct, knowledgeable, approachable. Return only the improved caption, no explanation:\n\n${topic}`;
+  } else if (type === 'rewrite') {
+    prompt = `Rewrite this video teleprompter script with the following instructions: ${format}\n\nKeep it as a clean teleprompter script — complete sentences, no bullet points, no stage directions. Keep Kristy Flach's voice (direct, knowledgeable, approachable). Return only the rewritten script:\n\n${topic}`;
   } else {
     // Full video script
     prompt = `Write a ${format} video script for Kristy Flach, a Certified Mortgage Advisor (CMA) and Loan Officer (NMLS #2632259) at Paramount Residential Mortgage Group, licensed in 49 states with 20+ years of experience including 17 years in underwriting.
