@@ -141,92 +141,32 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true });
       }
 
-      // AI DRAFT — generate a blog post from a topic
+      // AI DRAFT — delegate to central ai-api
       if (action === 'ai-draft') {
         var topic = body.topic;
         if (!topic) return res.status(400).json({ error: 'topic required' });
-
-        var apiKey = process.env.ANTHROPIC_API_KEY;
-        if (!apiKey) return res.status(500).json({ error: 'Anthropic API key not configured' });
-
-        var systemPrompt = 'You are a professional blog writer for Kristy Flach, a Certified Mortgage Advisor (CMA) and Loan Officer at Paramount Residential Mortgage Group (PRMG), licensed in 49 states. Kristy has over 20 years in the mortgage industry including 17 years in underwriting — she knows exactly how to structure files that get approved smoothly.\n\n' +
-          'WHAT A CMA IS:\n' +
-          'The Certified Mortgage Advisor designation represents the highest standard of excellence for mortgage professionals in the United States. It goes far beyond traditional loan-officer training and focuses on understanding how mortgage decisions fit into a broader financial picture — personal wealth creation, stock and bond markets, technical market analysis, economic reports, central banking, Federal Reserve policy, and what truly drives interest rates.\n\n' +
-          'KRISTY\'S VOICE AND POSITIONING:\n' +
-          '- Educator first — her approach is "edusales." She pulls back the curtain on a complex industry so clients understand, know, and trust what is happening\n' +
-          '- Her core mission: help people use their mortgage as a tool to create financial independence\n' +
-          '- She speaks with authority from real experience — she has been on the underwriting side and knows how approvals actually work\n' +
-          '- She explains complex concepts clearly without talking down to people\n' +
-          '- Confident, direct, no fluff — warm but professional\n' +
-          '- Trusted advisor, not a salesperson\n' +
-          '- Use "I" voice as Kristy\n' +
-          '- ALWAYS end the post with a clear call to action (e.g. reach out, schedule a call, start the conversation)\n\n' +
-          'OUTPUT FORMAT — return ONLY valid JSON, no markdown, no backticks:\n' +
-          '{"title":"...","category":"...","summary":"A 1-2 sentence summary for the blog card on the homepage","body":"The full blog post in HTML format (use <h3>, <p>, <ul>, <li>, <strong>, <em> tags). Aim for 600-900 words."}\n\n' +
-          'Category must be one of: Home Buying, Refinance, Mortgage Strategy, Market Update, Credit & Finance, First-Time Buyers';
-
-        var aiResp = await fetch('https://api.anthropic.com/v1/messages', {
+        var aiResp = await fetch('https://agent-edge-backend.vercel.app/api/ai-api', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01'
-          },
-          body: JSON.stringify({
-            model: 'claude-sonnet-4-20250514',
-            max_tokens: 2000,
-            messages: [{ role: 'user', content: 'Write a mortgage blog post about: ' + topic }],
-            system: systemPrompt
-          })
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'blog-draft', topic: topic })
         });
-
         var aiData = await aiResp.json();
-        var aiText = aiData.content && aiData.content[0] ? aiData.content[0].text : '';
-
-        try {
-          var cleaned = aiText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-          var parsed = JSON.parse(cleaned);
-          return res.status(200).json({ success: true, draft: parsed });
-        } catch (e) {
-          return res.status(200).json({ success: true, draft: { title: '', category: 'General', summary: '', body: aiText } });
-        }
+        if (!aiData.success) return res.status(500).json({ error: aiData.error || 'AI draft failed' });
+        return res.status(200).json({ success: true, draft: aiData.draft });
       }
 
-      // AI POLISH — improve provided text
+      // AI POLISH — delegate to central ai-api
       if (action === 'ai-polish') {
         var text = body.text;
         if (!text) return res.status(400).json({ error: 'text required' });
-        var instructions = body.instructions || '';
-
-        var apiKey = process.env.ANTHROPIC_API_KEY;
-        if (!apiKey) return res.status(500).json({ error: 'Anthropic API key not configured' });
-
-        var systemPrompt = 'You are editing a blog post for Kristy Flach, a Certified Mortgage Advisor. Polish the writing to be professional, clear, and engaging. Fix grammar, improve flow, and strengthen the educational value. Keep the same voice and meaning.\n\n' +
-          'Return ONLY the polished text in HTML format (use <h3>, <p>, <ul>, <li>, <strong>, <em> tags). No preamble, no explanation.';
-
-        var userMessage = 'Polish this blog post:\n\n' + text;
-        if (instructions) {
-          userMessage = 'Rewrite this blog post with the following specific instructions: ' + instructions + '\n\nHere is the post to rewrite:\n\n' + text;
-        }
-
-        var aiResp = await fetch('https://api.anthropic.com/v1/messages', {
+        var aiResp = await fetch('https://agent-edge-backend.vercel.app/api/ai-api', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01'
-          },
-          body: JSON.stringify({
-            model: 'claude-sonnet-4-20250514',
-            max_tokens: 2000,
-            messages: [{ role: 'user', content: userMessage }],
-            system: systemPrompt
-          })
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'blog-polish', text: text, instructions: body.instructions || '' })
         });
-
         var aiData = await aiResp.json();
-        var polished = aiData.content && aiData.content[0] ? aiData.content[0].text : text;
-        return res.status(200).json({ success: true, polished: polished });
+        if (!aiData.success) return res.status(500).json({ error: aiData.error || 'AI polish failed' });
+        return res.status(200).json({ success: true, polished: aiData.result });
       }
 
       return res.status(400).json({ error: 'Unknown action' });
