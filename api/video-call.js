@@ -57,7 +57,8 @@ export default async function handler(req, res) {
               enable_chat: false,
               start_video_off: false,
               start_audio_off: false,
-              max_participants: 2
+              max_participants: 25,
+              enable_knocking: true
             }
           })
         });
