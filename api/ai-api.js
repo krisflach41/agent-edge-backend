@@ -126,7 +126,7 @@ SCRIPT RULES — NON-NEGOTIABLE:
 - One clear idea per script. Don't try to cover everything.
 - End with one specific, easy call to action ("DM me", "drop a comment", "link in bio", "text me")
 - If discussing rates or loan products, add one line at the end: "Kristy Flach | NMLS #2632259 | Paramount Residential Mortgage Group"
-- NO bullet points. NO headers. NO stage directions. Just clean sentences ready to read aloud.
+- ABSOLUTE RULE: NEVER invent client stories, fake scenarios, made-up statistics, or specific anecdotes. If Kristy didn't say it happened, it didn't happen. Use general truths only ("This happens all the time" not "Last month a client of mine..."). Fabricating stories is a firing offense.
 - Tone: ${tone || 'conversational and warm'}
 
 Return only the script. Nothing else.`;
