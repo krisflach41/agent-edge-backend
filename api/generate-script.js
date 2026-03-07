@@ -8,7 +8,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { topic, format, audience, type, tone } = req.body;
+  const { topic, format, audience, type, tone, directions } = req.body;
   if (!topic) return res.status(400).json({ error: 'topic required' });
 
   let payload = {};
@@ -19,7 +19,7 @@ export default async function handler(req, res) {
   } else if (type === 'rewrite') {
     payload = { action: 'video-rewrite', script: topic, instructions: format };
   } else {
-    payload = { action: 'video-script', topic, format, audience, tone };
+    payload = { action: 'video-script', topic, format, audience, tone, directions };
   }
 
   try {
