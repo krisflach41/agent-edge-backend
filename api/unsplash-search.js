@@ -9,7 +9,7 @@ export default async function handler(req, res) {
   const key = process.env.UNSPLASH_ACCESS_KEY;
   if (!key) return res.status(500).json({ error: 'UNSPLASH_ACCESS_KEY not configured' });
 
-  const { query, per_page, download } = req.query;
+  const { query, per_page, page, download } = req.query;
 
   // Trigger download (required by Unsplash API terms)
   if (download) {
@@ -23,7 +23,7 @@ export default async function handler(req, res) {
 
   try {
     const resp = await fetch(
-      `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=${per_page || 12}&orientation=landscape`,
+      `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=${per_page || 18}&page=${page || 1}&orientation=landscape`,
       { headers: { Authorization: `Client-ID ${key}` } }
     );
     const data = await resp.json();
