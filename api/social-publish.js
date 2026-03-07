@@ -19,10 +19,10 @@ export default async function handler(req, res) {
 
   // ---- FACEBOOK ----
   if (platforms.includes('facebook')) {
-    const FB_PAGE_TOKEN = process.env.FB_PAGE_TOKEN;
-    const FB_PAGE_ID = process.env.FB_PAGE_ID;
+    const FB_PAGE_TOKEN = process.env.META_PAGE_ACCESS_TOKEN;
+    const FB_PAGE_ID = process.env.META_PAGE_ID;
     if (!FB_PAGE_TOKEN || !FB_PAGE_ID) {
-      errors.facebook = 'FB_PAGE_TOKEN and FB_PAGE_ID not configured';
+      errors.facebook = 'META_PAGE_ACCESS_TOKEN and META_PAGE_ID not configured';
     } else {
       try {
         const endpoint = photo
@@ -54,10 +54,10 @@ export default async function handler(req, res) {
 
   // ---- INSTAGRAM ----
   if (platforms.includes('instagram')) {
-    const FB_PAGE_TOKEN = process.env.FB_PAGE_TOKEN;
+    const FB_PAGE_TOKEN = process.env.META_PAGE_ACCESS_TOKEN;
     const IG_ACCOUNT_ID = process.env.IG_ACCOUNT_ID;
     if (!FB_PAGE_TOKEN || !IG_ACCOUNT_ID) {
-      errors.instagram = 'FB_PAGE_TOKEN and IG_ACCOUNT_ID not configured';
+      errors.instagram = 'META_PAGE_ACCESS_TOKEN and IG_ACCOUNT_ID not configured';
     } else {
       try {
         // Instagram requires a photo for feed posts
