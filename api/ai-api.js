@@ -112,8 +112,8 @@ Return ONLY the polished text in HTML format (use <h3>, <p>, <ul>, <li>, <strong
 
       // ---- VIDEO SCRIPT ----
       case 'video-script': {
-        const { topic, format, audience, tone } = body;
-        if (!topic) return res.status(400).json({ error: 'topic required' });
+        const { topic, format, audience, tone, directions } = body;
+        if (!topic && !directions) return res.status(400).json({ error: 'topic or directions required' });
         maxTokens = 800;
         systemPrompt = `${KRISTY_PROFILE}
 
@@ -129,12 +129,16 @@ SCRIPT RULES — NON-NEGOTIABLE:
 - ABSOLUTE RULE: NEVER invent client stories, fake scenarios, made-up statistics, or specific anecdotes. If Kristy didn't say it happened, it didn't happen. Use general truths only ("This happens all the time" not "Last month a client of mine..."). Fabricating stories is a firing offense.
 - Tone: ${tone || 'conversational and warm'}
 
+${directions ? `KRISTY'S DIRECTIONS — THESE OVERRIDE EVERYTHING ABOVE:\n${directions}` : ''}
+
 Return only the script. Nothing else.`;
-        userMessage = `Write a ${format || '60-second'} video script about: ${topic}\nAudience: ${audience || 'general'}`;
+        userMessage = directions
+          ? `Topic: ${topic || '(see directions)'}\nWrite the script following my directions exactly.`
+          : `Write a ${format || '60-second'} video script about: ${topic}\nAudience: ${audience || 'general'}`;
         break;
       }
 
-      // ---- VIDEO REWRITE ----
+            // ---- VIDEO REWRITE ----
       case 'video-rewrite': {
         const { script, instructions } = body;
         if (!script || !instructions) return res.status(400).json({ error: 'script and instructions required' });
