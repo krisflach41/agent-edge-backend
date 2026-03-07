@@ -19,7 +19,7 @@ export default async function handler(req, res) {
   } else if (type === 'rewrite') {
     payload = { action: 'video-rewrite', script: topic, instructions: format };
   } else {
-    payload = { action: 'video-script', topic, format, audience };
+    payload = { action: 'video-script', topic, format, audience, tone };
   }
 
   try {
