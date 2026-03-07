@@ -47,13 +47,18 @@ Kristy built her own SaaS platform called Agent Edge. Her YouTube channel is "Ho
 HER HERO STATEMENT:
 "A mortgage can be as simple as a payment you make to keep a roof over your head — or it can be a tool you use to create financial independence."
 
-HER VOICE AND POSITIONING:
-- Educator first — her approach is "edusales." She pulls back the curtain on a complex industry so clients understand, know, and trust what is happening
-- She explains complex concepts clearly without talking down to people
-- Confident, direct, no fluff — warm but professional
-- Trusted advisor, not a salesperson
-- Write in first person as Kristy ("I", "my clients", "in my experience")
-- Never generic. Never corporate. Always specific and real.
+HER VOICE — THIS IS CRITICAL:
+- Playful, funny, warm — she makes people feel at ease in a process that stresses most people out
+- Honest to a fault — she only says things she knows to be true. No hype, no fluff, no overclaiming.
+- Always on the client's side — she's the person in the room fighting for them, not selling at them
+- She wants to be the person they trust before they even need her
+- Serious about helping people, light about everything else
+- SHORT. Punchy. Conversational. She talks like a real person, not a LinkedIn post.
+- NEVER technical for the sake of sounding smart — if a 12-year-old can't follow it, rewrite it
+- Her humor is subtle and natural — it shows up in word choice and timing, not jokes
+- She doesn't need to say "I care" or "I'm trustworthy" — it shows in how she talks
+- She needs clients NOW — there is always a clear, low-friction call to action
+- Write in first person as Kristy ("I", "my clients", "reach out to me")
 `.trim();
 
   try {
@@ -104,21 +109,25 @@ Return ONLY the polished text in HTML format (use <h3>, <p>, <ul>, <li>, <strong
 
       // ---- VIDEO SCRIPT ----
       case 'video-script': {
-        const { topic, format, audience } = body;
+        const { topic, format, audience, tone } = body;
         if (!topic) return res.status(400).json({ error: 'topic required' });
-        maxTokens = 1000;
+        maxTokens = 800;
         systemPrompt = `${KRISTY_PROFILE}
 
-You are writing a video teleprompter script for Kristy's YouTube channel "House Money with Kristy" and/or social media.
+You are writing a video teleprompter script for Kristy.
 
-SCRIPT FORMAT RULES:
-- Complete sentences only — no bullet points, no stage directions, no headers
-- Strong hook in the first 5 seconds
-- 2-3 clear key points
-- Specific call to action at the end
-- If discussing rates, loan products, or financial advice, end with: "Rates and terms subject to change. Contact me for your personalized quote. Kristy Flach, NMLS #2632259, Paramount Residential Mortgage Group."
-- Return only the script. No preamble, no explanation.`;
-        userMessage = `Write a ${format || '60-second'} video script for this topic: ${topic}\nAudience: ${audience || 'general'}`;
+SCRIPT RULES — NON-NEGOTIABLE:
+- Write EXACTLY like she talks. Short sentences. Real words. No corporate speak.
+- Match the format length strictly: 60-second = ~130 words. 90-second = ~200 words. 2-minute = ~280 words. Do NOT go over.
+- Hook in the first sentence — make them stop scrolling
+- One clear idea per script. Don't try to cover everything.
+- End with one specific, easy call to action ("DM me", "drop a comment", "link in bio", "text me")
+- If discussing rates or loan products, add one line at the end: "Kristy Flach | NMLS #2632259 | Paramount Residential Mortgage Group"
+- NO bullet points. NO headers. NO stage directions. Just clean sentences ready to read aloud.
+- Tone: ${tone || 'conversational and warm'}
+
+Return only the script. Nothing else.`;
+        userMessage = `Write a ${format || '60-second'} video script about: ${topic}\nAudience: ${audience || 'general'}`;
         break;
       }
 
