@@ -23,7 +23,7 @@ export default async function handler(req, res) {
 
   try {
     const resp = await fetch(
-      `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=${per_page || 18}&page=${page || 1}&orientation=landscape`,
+      `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=${per_page || 6}&page=${page || 1}&orientation=landscape`,
       { headers: { Authorization: `Client-ID ${key}` } }
     );
     const data = await resp.json();
