@@ -1,5 +1,10 @@
-// /api/upload-image.js — Upload base64 image to Supabase Storage, return public URL
-// POST JSON: { image: "data:image/jpeg;base64,...", filename: "optional-name" }
+// /api/upload-image.js — Upload image file to Supabase Storage via FormData
+// POST multipart/form-data: file (image), filename (optional)
+
+import { IncomingForm } from 'formidable';
+import fs from 'fs';
+
+export const config = { api: { bodyParser: false } };
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -16,31 +21,25 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { image, filename } = req.body;
+    const form = new IncomingForm({ maxFileSize: 20 * 1024 * 1024 }); // 20MB
 
-    if (!image) return res.status(400).json({ error: 'image (base64 data URL) required' });
+    const { fields, files } = await new Promise((resolve, reject) => {
+      form.parse(req, (err, fields, files) => {
+        if (err) reject(err);
+        else resolve({ fields, files });
+      });
+    });
 
-    // Parse the data URL: data:image/jpeg;base64,/9j/4AAQ...
-    const match = image.match(/^data:(image\/\w+);base64,(.+)$/);
-    if (!match) {
-      // If it's already a URL (not base64), just pass it back
-      if (image.startsWith('http')) {
-        return res.status(200).json({ success: true, url: image });
-      }
-      return res.status(400).json({ error: 'Invalid image format. Expected base64 data URL or http URL.' });
-    }
+    const file = Array.isArray(files.file) ? files.file[0] : files.file;
+    if (!file) return res.status(400).json({ error: 'No file provided' });
 
-    const mimeType = match[1]; // e.g. image/jpeg
-    const base64Data = match[2];
-    const ext = mimeType.split('/')[1] === 'jpeg' ? 'jpg' : mimeType.split('/')[1]; // jpg, png, gif, webp
+    const filename = Array.isArray(fields.filename) ? fields.filename[0] : fields.filename || 'post-image';
 
-    // Convert base64 to buffer
-    const buffer = Buffer.from(base64Data, 'base64');
-
-    // Generate filename
-    const safeName = filename
-      ? filename.replace(/[^a-z0-9]/gi, '-').toLowerCase()
-      : 'post-image';
+    // Read file buffer
+    const fileBuffer = fs.readFileSync(file.filepath);
+    const mimeType = file.mimetype || 'image/jpeg';
+    const ext = mimeType.split('/')[1] === 'jpeg' ? 'jpg' : (mimeType.split('/')[1] || 'jpg');
+    const safeName = filename.replace(/[^a-z0-9]/gi, '-').toLowerCase();
     const storagePath = `social/${Date.now()}-${safeName}.${ext}`;
 
     // Upload to Supabase Storage bucket "media"
@@ -51,7 +50,7 @@ export default async function handler(req, res) {
         'Content-Type': mimeType,
         'x-upsert': 'true'
       },
-      body: buffer
+      body: fileBuffer
     });
 
     if (!uploadResp.ok) {
@@ -60,6 +59,9 @@ export default async function handler(req, res) {
     }
 
     const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/media/${storagePath}`;
+
+    // Clean up temp file
+    try { fs.unlinkSync(file.filepath); } catch(e) {}
 
     return res.status(200).json({ success: true, url: publicUrl });
 
