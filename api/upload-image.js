@@ -1,8 +1,5 @@
-// /api/upload-image.js — Upload image file to Supabase Storage via FormData
-// POST multipart/form-data: file (image), filename (optional)
-
-import { IncomingForm } from 'formidable';
-import fs from 'fs';
+// /api/upload-image.js — Upload image to Supabase Storage
+// Accepts both FormData (file upload) and JSON (base64 data URL)
 
 export const config = { api: { bodyParser: false } };
 
@@ -21,26 +18,80 @@ export default async function handler(req, res) {
   }
 
   try {
-    const form = new IncomingForm({ maxFileSize: 20 * 1024 * 1024 }); // 20MB
+    // Read raw body as buffer
+    const chunks = [];
+    for await (const chunk of req) {
+      chunks.push(chunk);
+    }
+    const rawBody = Buffer.concat(chunks);
 
-    const { fields, files } = await new Promise((resolve, reject) => {
-      form.parse(req, (err, fields, files) => {
-        if (err) reject(err);
-        else resolve({ fields, files });
-      });
-    });
+    let fileBuffer, mimeType, safeName;
+    const contentType = req.headers['content-type'] || '';
 
-    const file = Array.isArray(files.file) ? files.file[0] : files.file;
-    if (!file) return res.status(400).json({ error: 'No file provided' });
+    if (contentType.includes('multipart/form-data')) {
+      // Parse multipart manually — find the file boundary
+      const boundary = contentType.split('boundary=')[1];
+      if (!boundary) return res.status(400).json({ error: 'No boundary in multipart' });
 
-    const filename = Array.isArray(fields.filename) ? fields.filename[0] : fields.filename || 'post-image';
+      const bodyStr = rawBody.toString('latin1');
+      const parts = bodyStr.split('--' + boundary);
 
-    // Read file buffer
-    const fileBuffer = fs.readFileSync(file.filepath);
-    const mimeType = file.mimetype || 'image/jpeg';
+      let filePart = null;
+      for (const part of parts) {
+        if (part.includes('filename=')) {
+          filePart = part;
+          break;
+        }
+      }
+
+      if (!filePart) return res.status(400).json({ error: 'No file found in upload' });
+
+      // Extract content type from part headers
+      const ctMatch = filePart.match(/Content-Type:\s*(.+?)[\r\n]/i);
+      mimeType = ctMatch ? ctMatch[1].trim() : 'image/jpeg';
+
+      // Extract filename
+      const fnMatch = filePart.match(/filename="(.+?)"/);
+      safeName = fnMatch ? fnMatch[1].replace(/[^a-z0-9.]/gi, '-').toLowerCase() : 'post-image';
+
+      // File data starts after double newline in the part
+      const headerEnd = filePart.indexOf('\r\n\r\n');
+      if (headerEnd === -1) return res.status(400).json({ error: 'Malformed multipart data' });
+
+      // Get the byte offset in the raw buffer
+      const partStart = rawBody.indexOf(Buffer.from(filePart.substring(0, 40), 'latin1'));
+      const dataStart = partStart + headerEnd + 4;
+
+      // Find end of this part (before next boundary)
+      const endBoundary = Buffer.from('\r\n--' + boundary, 'latin1');
+      let dataEnd = rawBody.indexOf(endBoundary, dataStart);
+      if (dataEnd === -1) dataEnd = rawBody.length;
+
+      fileBuffer = rawBody.slice(dataStart, dataEnd);
+
+    } else {
+      // JSON body with base64
+      const body = JSON.parse(rawBody.toString('utf8'));
+      const image = body.image;
+      const filename = body.filename || 'post-image';
+
+      if (!image) return res.status(400).json({ error: 'No image provided' });
+
+      // If already a URL, pass through
+      if (image.startsWith('http')) {
+        return res.status(200).json({ success: true, url: image });
+      }
+
+      const match = image.match(/^data:(image\/\w+);base64,(.+)$/);
+      if (!match) return res.status(400).json({ error: 'Invalid base64 data URL' });
+
+      mimeType = match[1];
+      fileBuffer = Buffer.from(match[2], 'base64');
+      safeName = filename.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+    }
+
     const ext = mimeType.split('/')[1] === 'jpeg' ? 'jpg' : (mimeType.split('/')[1] || 'jpg');
-    const safeName = filename.replace(/[^a-z0-9]/gi, '-').toLowerCase();
-    const storagePath = `social/${Date.now()}-${safeName}.${ext}`;
+    const storagePath = `social/${Date.now()}-${safeName.replace(/\.\w+$/, '')}.${ext}`;
 
     // Upload to Supabase Storage bucket "media"
     const uploadResp = await fetch(`${SUPABASE_URL}/storage/v1/object/media/${storagePath}`, {
@@ -59,10 +110,6 @@ export default async function handler(req, res) {
     }
 
     const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/media/${storagePath}`;
-
-    // Clean up temp file
-    try { fs.unlinkSync(file.filepath); } catch(e) {}
-
     return res.status(200).json({ success: true, url: publicUrl });
 
   } catch (err) {
