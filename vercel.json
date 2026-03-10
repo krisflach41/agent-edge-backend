@@ -22,6 +22,10 @@
       "memory": 1024,
       "maxDuration": 60
     },
+    "api/property-lookup.js": {
+      "memory": 1024,
+      "maxDuration": 60
+    },
     "api/report-card.js": {
       "memory": 1024,
       "maxDuration": 45
