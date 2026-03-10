@@ -1,5 +1,4 @@
-// /api/property-lookup.js — Property lookup using Anthropic Claude with web search
-// GET ?address=789+Dorgene+Ln+Cincinnati+OH+45244&mls=1870625
+// /api/property-lookup.js — Property lookup via Anthropic Claude with web search
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -19,10 +18,7 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' });
   }
 
-  const searchParts = [];
-  if (mlsId) searchParts.push(`MLS #${mlsId}`);
-  if (address) searchParts.push(address);
-  const searchQuery = searchParts.join(' ') + ' property listing';
+  const query = [mlsId ? `MLS #${mlsId}` : '', address].filter(Boolean).join(' ');
 
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -33,76 +29,44 @@ export default async function handler(req, res) {
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 4000,
-        tools: [
-          {
-            type: 'web_search_20250305',
-            name: 'web_search'
-          }
-        ],
-        messages: [
-          {
-            role: 'user',
-            content: `I need complete property listing data. Search for: ${searchQuery}
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 2000,
+        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+        messages: [{
+          role: 'user',
+          content: `Search for this property: ${query}
 
-STEP 1: Search for the property on Google. Look for listings on Zillow, Realtor.com, or Redfin.
-
-STEP 2: Visit the actual listing page to get full details. You MUST visit the listing page URL to get photos and complete information.
-
-STEP 3: From the listing page, extract ALL photo URLs. Property listing photos are hosted on CDNs like:
-- Zillow: photos.zillowstatic.com 
-- Realtor.com: ap.rdcpix.com
-- Redfin: ssl.cdn-redfin.com
-Look in the page source for image URLs. Get every property photo URL you can find.
-
-STEP 4: Also extract: lot size, year built, full property description, listing agent name, listing status, and the listing page URL.
-
-Return ONLY a JSON object with this exact structure — no other text, no markdown fences, no explanation:
-
-{"address":"street address","city":"city","state":"ST","zip":"zipcode","price":640000,"beds":4,"baths":3.5,"sqft":3186,"lotSize":8500,"yearBuilt":1998,"description":"Full property description from the listing","photos":["https://full-url-to-photo1.jpg","https://full-url-to-photo2.jpg"],"listingAgent":"Agent Name","mlsId":"MLS number","propertyType":"Single Family","status":"Active","source":"zillow or realtor.com or redfin","url":"https://full-listing-page-url"}
-
-The photos array is CRITICAL. I need actual image URLs, not placeholder text. If you cannot find photo URLs, set photos to an empty array. Do NOT make up URLs.`
-          }
-        ]
+Visit the listing page on Zillow, Realtor.com, or Redfin. Return ONLY JSON:
+{"address":"","city":"","state":"","zip":"","price":0,"beds":0,"baths":0,"sqft":0,"lotSize":0,"yearBuilt":0,"description":"","photos":["url1","url2"],"listingAgent":"","mlsId":"","propertyType":"","status":"","source":"","url":""}`
+        }]
       })
     });
 
     if (!response.ok) {
       const errText = await response.text();
-      return res.status(200).json({ success: false, error: 'Anthropic API error: ' + response.status, detail: errText });
+      return res.status(200).json({ success: false, error: 'API error: ' + response.status, detail: errText });
     }
 
     const data = await response.json();
-
-    // Extract text response
     let textContent = '';
     for (const block of data.content || []) {
-      if (block.type === 'text') {
-        textContent += block.text;
-      }
+      if (block.type === 'text') textContent += block.text;
     }
 
     if (!textContent) {
-      return res.status(200).json({ success: false, error: 'No text response from Claude', raw: data.content });
+      return res.status(200).json({ success: false, error: 'No response text' });
     }
 
-    // Parse JSON from response
     let jsonStr = textContent.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
     const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
-    
     if (!jsonMatch) {
-      return res.status(200).json({ success: false, error: 'Could not find JSON in response', rawText: textContent.substring(0, 500) });
+      return res.status(200).json({ success: false, error: 'No JSON found', rawText: textContent.substring(0, 300) });
     }
 
-    try {
-      const property = JSON.parse(jsonMatch[0]);
-      return res.status(200).json({ success: true, property });
-    } catch (parseErr) {
-      return res.status(200).json({ success: false, error: 'JSON parse failed: ' + parseErr.message, rawText: textContent.substring(0, 500) });
-    }
+    const property = JSON.parse(jsonMatch[0]);
+    return res.status(200).json({ success: true, property });
 
   } catch (e) {
-    return res.status(200).json({ success: false, error: 'Request failed: ' + e.message });
+    return res.status(200).json({ success: false, error: e.message });
   }
 }
