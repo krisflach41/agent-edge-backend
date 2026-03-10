@@ -19,9 +19,10 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' });
   }
 
-  const searchQuery = mlsId
-    ? `MLS #${mlsId}${address ? ' ' + address : ''} property listing`
-    : `${address} property listing`;
+  const searchParts = [];
+  if (mlsId) searchParts.push(`MLS #${mlsId}`);
+  if (address) searchParts.push(address);
+  const searchQuery = searchParts.join(' ') + ' property listing';
 
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -33,7 +34,7 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 2000,
+        max_tokens: 4000,
         tools: [
           {
             type: 'web_search_20250305',
@@ -43,32 +44,25 @@ export default async function handler(req, res) {
         messages: [
           {
             role: 'user',
-            content: `Search for this property listing: ${searchQuery}
+            content: `I need complete property listing data. Search for: ${searchQuery}
 
-Find the actual real estate listing on Realtor.com, Zillow, or Redfin. Extract ALL of the following data and return it as a JSON object ONLY — no other text, no markdown, no explanation, just the raw JSON:
+STEP 1: Search for the property on Google. Look for listings on Zillow, Realtor.com, or Redfin.
 
-{
-  "address": "street address",
-  "city": "city",
-  "state": "state abbreviation",
-  "zip": "zip code",
-  "price": numeric price or null,
-  "beds": number or null,
-  "baths": number or null,
-  "sqft": number or null,
-  "lotSize": lot size in sqft or null,
-  "yearBuilt": year or null,
-  "description": "property description text",
-  "photos": ["url1", "url2", "url3"],
-  "listingAgent": "agent name",
-  "mlsId": "MLS number",
-  "propertyType": "Single Family, Condo, etc",
-  "status": "Active, Pending, Sold, etc",
-  "source": "realtor.com or zillow or redfin",
-  "url": "full URL to the listing page"
-}
+STEP 2: Visit the actual listing page to get full details. You MUST visit the listing page URL to get photos and complete information.
 
-CRITICAL: For the photos array, find the actual full-size image URLs from the listing. These are usually hosted on CDN domains like photos.zillowstatic.com, ap.rdcpix.com, ssl.cdn-redfin.com, or similar. Include as many photo URLs as you can find (up to 20). Return ONLY the JSON object, nothing else.`
+STEP 3: From the listing page, extract ALL photo URLs. Property listing photos are hosted on CDNs like:
+- Zillow: photos.zillowstatic.com 
+- Realtor.com: ap.rdcpix.com
+- Redfin: ssl.cdn-redfin.com
+Look in the page source for image URLs. Get every property photo URL you can find.
+
+STEP 4: Also extract: lot size, year built, full property description, listing agent name, listing status, and the listing page URL.
+
+Return ONLY a JSON object with this exact structure — no other text, no markdown fences, no explanation:
+
+{"address":"street address","city":"city","state":"ST","zip":"zipcode","price":640000,"beds":4,"baths":3.5,"sqft":3186,"lotSize":8500,"yearBuilt":1998,"description":"Full property description from the listing","photos":["https://full-url-to-photo1.jpg","https://full-url-to-photo2.jpg"],"listingAgent":"Agent Name","mlsId":"MLS number","propertyType":"Single Family","status":"Active","source":"zillow or realtor.com or redfin","url":"https://full-listing-page-url"}
+
+The photos array is CRITICAL. I need actual image URLs, not placeholder text. If you cannot find photo URLs, set photos to an empty array. Do NOT make up URLs.`
           }
         ]
       })
@@ -81,7 +75,7 @@ CRITICAL: For the photos array, find the actual full-size image URLs from the li
 
     const data = await response.json();
 
-    // Extract the text response from Claude
+    // Extract text response
     let textContent = '';
     for (const block of data.content || []) {
       if (block.type === 'text') {
@@ -93,12 +87,10 @@ CRITICAL: For the photos array, find the actual full-size image URLs from the li
       return res.status(200).json({ success: false, error: 'No text response from Claude', raw: data.content });
     }
 
-    // Try to parse the JSON from Claude's response
-    // Strip any markdown code fences
+    // Parse JSON from response
     let jsonStr = textContent.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-
-    // Find the JSON object in the response
     const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+    
     if (!jsonMatch) {
       return res.status(200).json({ success: false, error: 'Could not find JSON in response', rawText: textContent.substring(0, 500) });
     }
