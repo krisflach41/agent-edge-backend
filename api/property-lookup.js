@@ -1,4 +1,4 @@
-// /api/property-lookup.js — Debug: see if web_fetch is being used
+// /api/property-lookup.js — Property lookup via Anthropic Claude web search
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -18,7 +18,17 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' });
   }
 
-  const query = [mlsId ? `MLS #${mlsId}` : '', address].filter(Boolean).join(' ');
+  // Build multiple search strings for better coverage
+  const searches = [];
+  if (address && mlsId) {
+    searches.push(address + ' MLS ' + mlsId);
+    searches.push(address + ' for sale');
+  } else if (address) {
+    searches.push(address + ' for sale');
+    searches.push(address + ' real estate listing');
+  } else {
+    searches.push('MLS ' + mlsId + ' property listing');
+  }
 
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -26,24 +36,21 @@ export default async function handler(req, res) {
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'anthropic-beta': 'web-fetch-2025-09-10'
+        'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 4000,
-        system: 'You are a JSON API. Output ONLY raw JSON.',
-        tools: [
-          { type: 'web_search_20250305', name: 'web_search', max_uses: 3 },
-          { type: 'web_fetch_20250910', name: 'web_fetch', max_uses: 3 }
-        ],
+        max_tokens: 2000,
+        system: 'You are a property data API. You MUST return ONLY a JSON object. No text before it. No text after it. No markdown. No explanation. Start your response with { and end with }. Every field must have a value — use 0 for unknown numbers and "" for unknown strings. NEVER return null.',
+        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
         messages: [{
           role: 'user',
-          content: `Search for: ${query}
+          content: `Search for this property listing using these queries: "${searches.join('" and "')}"
 
-Find a Zillow, Realtor.com, or Redfin listing page. Then USE THE WEB FETCH TOOL to fetch that listing page URL. From the fetched page content, extract all property photo image URLs.
+Search on Zillow, Redfin, and Realtor.com. Combine information from ALL sources you find.
 
-Return: {"address":"","city":"","state":"","zip":"","price":0,"beds":0,"baths":0,"sqft":0,"lotSize":0,"yearBuilt":0,"description":"","photos":["url1"],"listingAgent":"","mlsId":"","propertyType":"","status":"","source":"","url":""}`
+Return this exact JSON structure with EVERY field filled in:
+{"address":"full street address","city":"city name","state":"XX","zip":"XXXXX","price":000000,"beds":0,"baths":0.0,"sqft":0000,"lotSize":0,"yearBuilt":0000,"description":"full property description from listing","listingAgent":"agent full name","mlsId":"${mlsId || ''}","propertyType":"Single Family","status":"For Sale","source":"which site had the most data","url":"full URL to best listing page","photos":[]}`
         }]
       })
     });
@@ -54,39 +61,32 @@ Return: {"address":"","city":"","state":"","zip":"","price":0,"beds":0,"baths":0
     }
 
     const data = await response.json();
-    
-    // Log ALL content block types to see what tools were used
-    const blockTypes = (data.content || []).map(b => ({
-      type: b.type,
-      name: b.name || undefined,
-      hasContent: !!b.content,
-      textPreview: b.type === 'text' ? (b.text || '').substring(0, 200) : undefined,
-      errorCode: b.content?.error_code || undefined
-    }));
-
     let textContent = '';
     for (const block of data.content || []) {
       if (block.type === 'text') textContent += block.text;
     }
 
-    let property = null;
-    if (textContent) {
-      const clean = textContent.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-      const match = clean.match(/\{[\s\S]*\}/);
-      if (match) {
-        try { property = JSON.parse(match[0]); } catch(e) {}
-      }
+    if (!textContent) {
+      return res.status(200).json({ success: false, error: 'No response from search' });
     }
 
-    return res.status(200).json({
-      success: !!property,
-      property: property,
-      debug: {
-        blockTypes,
-        stopReason: data.stop_reason,
-        totalBlocks: (data.content || []).length
+    const clean = textContent.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+    const match = clean.match(/\{[\s\S]*\}/);
+    if (!match) {
+      return res.status(200).json({ success: false, error: 'No JSON in response', rawText: textContent.substring(0, 300) });
+    }
+
+    try {
+      const property = JSON.parse(match[0]);
+      // Verify we got real data back, not all empty
+      if (property.address || property.price || property.beds) {
+        return res.status(200).json({ success: true, property });
+      } else {
+        return res.status(200).json({ success: false, error: 'Property found but no data returned. Try a different address format.', property });
       }
-    });
+    } catch (parseErr) {
+      return res.status(200).json({ success: false, error: 'JSON parse error: ' + parseErr.message, rawText: textContent.substring(0, 300) });
+    }
 
   } catch (e) {
     return res.status(200).json({ success: false, error: e.message });
