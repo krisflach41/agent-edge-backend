@@ -1,4 +1,4 @@
-// /api/property-lookup.js — Property lookup with web_search + web_fetch
+// /api/property-lookup.js — Debug: see if web_fetch is being used
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -32,20 +32,18 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 4000,
-        system: 'You are a JSON API. Output ONLY a raw JSON object. No explanation, no markdown fences, no text before or after. Start with { end with }.',
+        system: 'You are a JSON API. Output ONLY raw JSON.',
         tools: [
           { type: 'web_search_20250305', name: 'web_search', max_uses: 3 },
           { type: 'web_fetch_20250910', name: 'web_fetch', max_uses: 3 }
         ],
         messages: [{
           role: 'user',
-          content: `Search for this property listing: ${query}
+          content: `Search for: ${query}
 
-After finding a listing on Zillow, Realtor.com, or Redfin, fetch the actual listing page to get full details and photo URLs.
+Find a Zillow, Realtor.com, or Redfin listing page. Then USE THE WEB FETCH TOOL to fetch that listing page URL. From the fetched page content, extract all property photo image URLs.
 
-Photo URLs are in the page HTML on CDN domains like photos.zillowstatic.com, ap.rdcpix.com, ssl.cdn-redfin.com. Extract as many as you can find.
-
-Return: {"address":"","city":"","state":"","zip":"","price":0,"beds":0,"baths":0,"sqft":0,"lotSize":0,"yearBuilt":0,"description":"","photos":["url1","url2"],"listingAgent":"","mlsId":"","propertyType":"","status":"","source":"","url":""}`
+Return: {"address":"","city":"","state":"","zip":"","price":0,"beds":0,"baths":0,"sqft":0,"lotSize":0,"yearBuilt":0,"description":"","photos":["url1"],"listingAgent":"","mlsId":"","propertyType":"","status":"","source":"","url":""}`
         }]
       })
     });
@@ -56,23 +54,39 @@ Return: {"address":"","city":"","state":"","zip":"","price":0,"beds":0,"baths":0
     }
 
     const data = await response.json();
+    
+    // Log ALL content block types to see what tools were used
+    const blockTypes = (data.content || []).map(b => ({
+      type: b.type,
+      name: b.name || undefined,
+      hasContent: !!b.content,
+      textPreview: b.type === 'text' ? (b.text || '').substring(0, 200) : undefined,
+      errorCode: b.content?.error_code || undefined
+    }));
+
     let textContent = '';
     for (const block of data.content || []) {
       if (block.type === 'text') textContent += block.text;
     }
 
-    if (!textContent) {
-      return res.status(200).json({ success: false, error: 'No response', contentTypes: (data.content || []).map(b => b.type) });
+    let property = null;
+    if (textContent) {
+      const clean = textContent.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+      const match = clean.match(/\{[\s\S]*\}/);
+      if (match) {
+        try { property = JSON.parse(match[0]); } catch(e) {}
+      }
     }
 
-    const clean = textContent.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-    const match = clean.match(/\{[\s\S]*\}/);
-    if (!match) {
-      return res.status(200).json({ success: false, error: 'No JSON found', rawText: textContent.substring(0, 500) });
-    }
-
-    const property = JSON.parse(match[0]);
-    return res.status(200).json({ success: true, property });
+    return res.status(200).json({
+      success: !!property,
+      property: property,
+      debug: {
+        blockTypes,
+        stopReason: data.stop_reason,
+        totalBlocks: (data.content || []).length
+      }
+    });
 
   } catch (e) {
     return res.status(200).json({ success: false, error: e.message });
