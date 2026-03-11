@@ -1,6 +1,8 @@
-// /api/publish-site.js — Publish property website HTML to Supabase Storage
+// /api/publish-site.js — Save property website HTML to database
 // Photos are uploaded separately via /api/upload-image
-// This endpoint only uploads the final HTML and returns the public URL
+// HTML is stored in property_sites table and served via /api/serve-site
+
+import { createClient } from '@supabase/supabase-js';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', 'https://kristyflach.com');
@@ -17,32 +19,32 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { slug, html } = req.body;
+    const { slug, html, address, agent, template } = req.body;
 
     if (!slug || !html) {
       return res.status(400).json({ error: 'Missing slug or html' });
     }
 
-    // Upload the HTML file to Supabase Storage
-    const htmlPath = `property-sites/${slug}/index.html`;
-    const htmlBuffer = Buffer.from(html, 'utf8');
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-    const uploadResp = await fetch(`${SUPABASE_URL}/storage/v1/object/media/${htmlPath}`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
-        'Content-Type': 'text/html',
-        'x-upsert': 'true'
-      },
-      body: htmlBuffer
-    });
+    // Upsert — insert new or update existing site with same slug
+    const { error } = await supabase
+      .from('property_sites')
+      .upsert({
+        slug: slug,
+        html: html,
+        address: address || '',
+        agent: agent || '',
+        template: template || '',
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'slug' });
 
-    if (!uploadResp.ok) {
-      const err = await uploadResp.text();
-      return res.status(500).json({ error: 'HTML upload failed', detail: err });
+    if (error) {
+      return res.status(500).json({ error: 'Database save failed', detail: error.message });
     }
 
-    const siteUrl = `${SUPABASE_URL}/storage/v1/object/public/media/${htmlPath}`;
+    // Build the live URL
+    const siteUrl = 'https://agent-edge-backend.vercel.app/api/serve-site?slug=' + encodeURIComponent(slug);
 
     return res.status(200).json({
       success: true,
