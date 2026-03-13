@@ -105,7 +105,10 @@ export default async function handler(req, res) {
         username: cleanEmail,
         name: user.full_name,
         email: cleanEmail,
-        brokerage: user.brokerage
+        brokerage: user.brokerage,
+        title: user.title || '',
+        phone: user.phone || '',
+        website: user.website || ''
       },
       tempPassword: user.temp_password || false,
       isAdmin: user.is_admin || false,
