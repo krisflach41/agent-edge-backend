@@ -23,7 +23,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { fullName, email, brokerage, password } = req.body;
+    const { fullName, email, brokerage, title, phone, website, password } = req.body;
 
     if (!fullName || !email || !brokerage || !password) {
       return res.status(400).json({ success: false, message: 'All fields are required' });
@@ -59,6 +59,9 @@ export default async function handler(req, res) {
         name: fullName,
         email: cleanEmail,
         company: brokerage,
+        title: title || '',
+        phone: phone || '',
+        website: website || '',
         type: 'realtor',
         source: 'portal_signup',
         created_at: now,
@@ -83,6 +86,9 @@ export default async function handler(req, res) {
         email: cleanEmail,
         full_name: fullName,
         brokerage: brokerage,
+        title: title || '',
+        phone: phone || '',
+        website: website || '',
         role: 'trial',
         is_admin: false,
         temp_password: false,
@@ -146,7 +152,10 @@ export default async function handler(req, res) {
         username: cleanEmail,
         name: fullName,
         email: cleanEmail,
-        brokerage: brokerage
+        brokerage: brokerage,
+        title: title || '',
+        phone: phone || '',
+        website: website || ''
       },
       role: 'trial',
       trialStart: now
