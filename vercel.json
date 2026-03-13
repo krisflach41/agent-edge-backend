@@ -10,6 +10,14 @@
     }
   ],
   "functions": {
+    "api/upload-image.js": {
+      "memory": 1024,
+      "maxDuration": 30
+    },
+    "api/publish-site.js": {
+      "memory": 1024,
+      "maxDuration": 60
+    },
     "api/blog-api.js": {
       "memory": 1024,
       "maxDuration": 60
