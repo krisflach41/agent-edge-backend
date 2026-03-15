@@ -89,6 +89,7 @@ export default async function handler(req, res) {
         website: website || '',
         type: 'realtor',
         source: 'portal_signup',
+        ae_id: aeId,
         created_at: now,
         updated_at: now
       }]);
