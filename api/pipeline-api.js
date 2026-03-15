@@ -352,44 +352,49 @@ export default async function handler(req, res) {
         return res.status(500).json({ success: false, message: 'Failed to create history: ' + histErr.message });
       }
 
-      // 4. Log activity on the CRM contact
+      // 4. Collect ALL CRM IDs on this loan (primary + co-borrowers)
       var crmId = historyRecord.crm_contact_id;
-      if (crmId) {
-        var activityType = cl.outcome === 'funded' ? 'loan_funded' : 'loan_' + cl.outcome;
-        var activitySubject = cl.outcome === 'funded' 
-          ? 'Loan Funded — ' + (cl.loan_type || 'Loan') + ' @ ' + (cl.interest_rate || '?') + '%'
-          : 'Loan ' + cl.outcome.charAt(0).toUpperCase() + cl.outcome.slice(1);
-        var activityBody = historyRecord.primary_name + ' | ' + (cl.loan_type || '') + ' | ' + (cl.subject_address || 'No address') + ' | ' + historyRecord.outcome_date;
-        
-        try {
-          await supabase.from('crm_activity').insert([{
-            crm_id: crmId,
-            type: activityType,
-            subject: activitySubject,
-            body: activityBody,
-            date: now
-          }]);
-        } catch(e) { console.error('Activity insert error:', e); }
+      var allCrmIds = [];
+      if (crmId) allCrmIds.push(crmId);
+      if (pBorrowers && pBorrowers.length > 0) {
+        pBorrowers.forEach(function(b) {
+          if (b.crm_id && allCrmIds.indexOf(b.crm_id) === -1) allCrmIds.push(b.crm_id);
+        });
       }
 
-      // 5. Archive the pipeline card (update stage, don't delete — preserve the record)
+      // 5. Log activity on ALL CRM contacts on this loan
+      var activityType = cl.outcome === 'funded' ? 'loan_funded' : 'loan_' + cl.outcome;
+      var activitySubject = cl.outcome === 'funded' 
+        ? 'Loan Funded — ' + (cl.loan_type || 'Loan') + ' @ ' + (cl.interest_rate || '?') + '%'
+        : 'Loan ' + cl.outcome.charAt(0).toUpperCase() + cl.outcome.slice(1);
+      var activityBody = historyRecord.primary_name + ' | ' + (cl.loan_type || '') + ' | ' + (cl.subject_address || 'No address') + ' | ' + historyRecord.outcome_date;
+
+      for (var ai = 0; ai < allCrmIds.length; ai++) {
+        try {
+          await supabase.from('crm_activity').insert([{
+            crm_id: allCrmIds[ai], type: activityType,
+            subject: activitySubject, body: activityBody, date: now
+          }]);
+        } catch(e) { console.error('Activity insert error for ' + allCrmIds[ai] + ':', e); }
+      }
+
+      // 6. Archive the pipeline card (update stage, don't delete — preserve the record)
       await supabase
         .from('pipeline_clients')
         .update({ stage: cl.outcome === 'funded' ? 'closed' : 'archived', updated_at: now })
         .eq('contact_id', cl.contactId);
 
-      // 6. Convert CRM contacts to past_client
-      if (crmId) {
-        try { await supabase.from('crm_contacts').update({ type: 'past_client' }).eq('id', crmId); } catch(e) { console.error('Type update error:', e); }
-      }
-      // Also convert any co-borrower CRM contacts
-      if (pBorrowers && pBorrowers.length > 0) {
-        var coBorrowerCrmIds = pBorrowers
-          .filter(function(b) { return b.crm_id && b.crm_id !== crmId; })
-          .map(function(b) { return b.crm_id; });
-        for (var i = 0; i < coBorrowerCrmIds.length; i++) {
-          try { await supabase.from('crm_contacts').update({ type: 'past_client' }).eq('id', coBorrowerCrmIds[i]); } catch(e) { console.error('Co-borrower type update error:', e); }
-        }
+      // 7. Update designations on ALL CRM contacts: remove 'borrower', add 'past_client'
+      for (var di = 0; di < allCrmIds.length; di++) {
+        try {
+          var desigContact = await supabase.from('crm_contacts').select('designations').eq('id', allCrmIds[di]).single();
+          var desigs = (desigContact.data && desigContact.data.designations) ? desigContact.data.designations : [];
+          // Remove borrower
+          desigs = desigs.filter(function(d) { return d !== 'borrower'; });
+          // Add past_client if not already there
+          if (desigs.indexOf('past_client') === -1) desigs.push('past_client');
+          await supabase.from('crm_contacts').update({ designations: desigs, updated_at: now }).eq('id', allCrmIds[di]);
+        } catch(e) { console.error('Designation update error for ' + allCrmIds[di] + ':', e); }
       }
 
       return res.status(200).json({ success: true, historyId: historyId });
