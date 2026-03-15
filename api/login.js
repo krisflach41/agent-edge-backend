@@ -113,6 +113,7 @@ export default async function handler(req, res) {
       tempPassword: user.temp_password || false,
       isAdmin: user.is_admin || false,
       role: user.role || 'trial',
+      aeId: user.ae_id || '',
       trialStart: user.trial_start_date || '',
       hasHeadshot: hasHeadshot,
       lenderName: lenderName,
