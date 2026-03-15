@@ -23,10 +23,10 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { fullName, email, brokerage, title, phone, website, password } = req.body;
+    const { fullName, email, brokerage, title, phone, website, password, accountType } = req.body;
 
     if (!fullName || !email || !brokerage || !password) {
-      return res.status(400).json({ success: false, message: 'All fields are required' });
+      return res.status(400).json({ success: false, message: 'All required fields must be filled in.' });
     }
 
     const cleanEmail = email.toLowerCase().trim();
@@ -48,10 +48,35 @@ export default async function handler(req, res) {
       return res.status(409).json({ success: false, message: 'An account with this email already exists. Try signing in instead.' });
     }
 
+    // Determine role based on accountType
+    const role = (accountType === 'partner') ? 'partner' : 'trial';
+    const accountLabel = (role === 'partner') ? 'Partner' : 'Explorer';
+
     const now = new Date().toISOString();
 
-    // ===== STEP 1: Create CRM contact FIRST (email is the ID) =====
-    // This must happen before activity tracking since crm_activity has a foreign key to crm_contacts
+    // ===== GENERATE AE ID =====
+    let aeId = 'AE-10001'; // default first ID
+    try {
+      const { data: maxRow } = await supabase
+        .from('users')
+        .select('ae_id')
+        .not('ae_id', 'is', null)
+        .order('ae_id', { ascending: false })
+        .limit(1);
+
+      if (maxRow && maxRow.length > 0 && maxRow[0].ae_id) {
+        const lastNum = parseInt(maxRow[0].ae_id.replace('AE-', ''), 10);
+        if (!isNaN(lastNum)) {
+          aeId = 'AE-' + (lastNum + 1);
+        }
+      }
+    } catch (aeErr) {
+      console.error('AE ID generation error:', aeErr);
+      // Fall back to timestamp-based ID
+      aeId = 'AE-' + Date.now().toString().slice(-5);
+    }
+
+    // ===== STEP 1: Create CRM contact FIRST =====
     const { error: crmError } = await supabase
       .from('crm_contacts')
       .insert([{
@@ -70,14 +95,12 @@ export default async function handler(req, res) {
 
     if (crmError) {
       console.error('CRM contact creation failed:', crmError);
-      // If it's a duplicate, that's okay — contact already exists
       if (crmError.code !== '23505') {
         return res.status(500).json({ success: false, message: 'Failed to create account. Please try again.' });
       }
     }
 
     // ===== STEP 2: Create user record =====
-    // Email is also the username — no separate username needed
     const { data: newUser, error: insertError } = await supabase
       .from('users')
       .insert([{
@@ -89,10 +112,11 @@ export default async function handler(req, res) {
         title: title || '',
         phone: phone || '',
         website: website || '',
-        role: 'trial',
+        role: role,
+        ae_id: aeId,
         is_admin: false,
         temp_password: false,
-        trial_start_date: now,
+        trial_start_date: (role === 'trial') ? now : null,
         joined_date: now
       }])
       .select();
@@ -103,47 +127,37 @@ export default async function handler(req, res) {
     }
 
     // ===== STEP 3: Track signup activity =====
-    // Now this will work because crm_contact exists with email as ID
     try {
       await supabase
         .from('crm_activity')
         .insert([{
           crm_id: cleanEmail,
           type: 'signup',
-          subject: 'New Trial Signup',
-          body: 'Portal trial signup - Brokerage: ' + brokerage,
+          subject: 'New ' + accountLabel + ' Signup',
+          body: accountLabel + ' signup — ' + fullName + ' / ' + brokerage + ' [' + aeId + ']',
           date: now
         }]);
     } catch (activityError) {
       console.error('Activity tracking failed:', activityError);
     }
 
-    // ===== STEP 4: Notify Kristy =====
+    // ===== STEP 4: SMS notification to Kristy =====
     try {
-      const readableTime = new Date().toLocaleString('en-US', {
-        timeZone: 'America/New_York',
-        month: '2-digit',
-        day: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
+      const smsMessage = 'Agent Edge: New ' + accountLabel + ' signup!\n' +
+        fullName + ' / ' + brokerage + '\n' +
+        cleanEmail + '\n' +
+        'ID: ' + aeId;
 
-      const formBody = new URLSearchParams();
-      formBody.append('_subject', 'New Agent Edge Trial Signup!');
-      formBody.append('Full_Name', fullName);
-      formBody.append('Email', cleanEmail);
-      formBody.append('Brokerage', brokerage);
-      formBody.append('Account_Type', '7-Day Trial');
-      formBody.append('Signup_Date', readableTime);
-
-      await fetch('https://formspree.io/f/mgoyyney', {
+      await fetch('https://agent-edge-backend.vercel.app/api/send-sms', {
         method: 'POST',
-        body: formBody,
-        headers: { 'Accept': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: '+12063135883',
+          message: smsMessage
+        })
       });
-    } catch (e) {
-      console.error('Formspree notification failed:', e);
+    } catch (smsErr) {
+      console.error('SMS notification failed:', smsErr);
     }
 
     return res.status(200).json({
@@ -157,8 +171,9 @@ export default async function handler(req, res) {
         phone: phone || '',
         website: website || ''
       },
-      role: 'trial',
-      trialStart: now
+      role: role,
+      aeId: aeId,
+      trialStart: (role === 'trial') ? now : null
     });
 
   } catch (error) {
