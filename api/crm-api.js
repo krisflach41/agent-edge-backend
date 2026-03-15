@@ -20,6 +20,28 @@ export default async function handler(req, res) {
 
   var action = req.query.action || (req.body && req.body.action) || '';
 
+  // ===== GENERATE AE ID HELPER =====
+  async function generateAeId() {
+    try {
+      var maxRows = await supaGet(SUPABASE_URL, SUPABASE_KEY,
+        '/rest/v1/crm_contacts?select=ae_id&ae_id=not.is.null&order=ae_id.desc&limit=1');
+      if (maxRows && maxRows.length > 0 && maxRows[0].ae_id) {
+        var lastNum = parseInt(maxRows[0].ae_id.replace('AE-', ''), 10);
+        if (!isNaN(lastNum)) return 'AE-' + (lastNum + 1);
+      }
+      // Also check users table in case signup created higher IDs
+      var maxUserRows = await supaGet(SUPABASE_URL, SUPABASE_KEY,
+        '/rest/v1/users?select=ae_id&ae_id=not.is.null&order=ae_id.desc&limit=1');
+      if (maxUserRows && maxUserRows.length > 0 && maxUserRows[0].ae_id) {
+        var lastUserNum = parseInt(maxUserRows[0].ae_id.replace('AE-', ''), 10);
+        if (!isNaN(lastUserNum)) return 'AE-' + (lastUserNum + 1);
+      }
+    } catch (e) {
+      console.error('AE ID gen error:', e);
+    }
+    return 'AE-' + (10000 + Date.now() % 10000);
+  }
+
   // ===== GET: LIST / SEARCH / SINGLE =====
   if (req.method === 'GET') {
 
@@ -30,25 +52,8 @@ export default async function handler(req, res) {
         if (!contact || contact.length === 0) {
           return res.status(404).json({ success: false, message: 'Not found' });
         }
-        // Merge the JSONB 'data' column back into the contact object
         var c = contact[0];
-        if (c.data && typeof c.data === 'object') {
-          var richData = c.data;
-          Object.keys(richData).forEach(function(k) {
-            if (c[k] === undefined || c[k] === null) {
-              c[k] = richData[k];
-            }
-          });
-          // Always overwrite these from JSONB — they are the source of truth
-          if (richData.employers) c.employers = richData.employers;
-          if (richData.education) c.education = richData.education;
-          if (richData.assets) c.assets = richData.assets;
-          if (richData.reos) c.reos = richData.reos;
-          if (richData.documents) c.documents = richData.documents;
-          if (richData.co_borrowers) c.co_borrowers = richData.co_borrowers;
-          if (richData.shared_loan) c.shared_loan = richData.shared_loan;
-        }
-        // Get activity history
+        unpackData(c);
         var activity = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_activity?crm_id=eq.' + req.query.id + '&order=date.desc&limit=50');
         return res.status(200).json({ success: true, contact: c, activity: activity || [] });
       } catch (err) {
@@ -60,36 +65,28 @@ export default async function handler(req, res) {
     try {
       var url = '/rest/v1/crm_contacts?order=name.asc';
 
-      // Type filter
+      // Root type filter
+      if (req.query.root_type) {
+        url += '&root_type=eq.' + req.query.root_type;
+      }
+      // Legacy type filter (still works for backward compat)
       if (req.query.type) {
         url += '&type=eq.' + req.query.type;
       }
 
-      // Search by name, email, phone, company (use OR)
+      // Designation filter — uses JSONB containment
+      if (req.query.designation) {
+        url += '&designations=cs.["' + req.query.designation + '"]';
+      }
+
+      // Search
       if (req.query.q) {
         var q = req.query.q;
-        url += '&or=(name.ilike.*' + q + '*,email.ilike.*' + q + '*,phone.ilike.*' + q + '*,company.ilike.*' + q + '*,tags.ilike.*' + q + '*)';
+        url += '&or=(name.ilike.*' + q + '*,email.ilike.*' + q + '*,phone.ilike.*' + q + '*,company.ilike.*' + q + '*,tags.ilike.*' + q + '*,ae_id.ilike.*' + q + '*)';
       }
 
       var contacts = await supaGet(SUPABASE_URL, SUPABASE_KEY, url);
-      // Unpack JSONB 'data' column into each contact (same as get endpoint)
-      (contacts || []).forEach(function(c) {
-        if (c.data && typeof c.data === 'object') {
-          var richData = c.data;
-          Object.keys(richData).forEach(function(k) {
-            if (c[k] === undefined || c[k] === null) {
-              c[k] = richData[k];
-            }
-          });
-          if (richData.employers) c.employers = richData.employers;
-          if (richData.education) c.education = richData.education;
-          if (richData.assets) c.assets = richData.assets;
-          if (richData.reos) c.reos = richData.reos;
-          if (richData.documents) c.documents = richData.documents;
-          if (richData.co_borrowers) c.co_borrowers = richData.co_borrowers;
-          if (richData.shared_loan) c.shared_loan = richData.shared_loan;
-        }
-      });
+      (contacts || []).forEach(function(c) { unpackData(c); });
       return res.status(200).json({ success: true, contacts: contacts || [] });
 
     } catch (err) {
@@ -112,6 +109,7 @@ export default async function handler(req, res) {
         return res.status(400).json({ success: false, message: 'Name is required' });
       }
 
+      var isNew = !c.id;
       if (!c.id) {
         c.id = 'crm-' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
       }
@@ -125,7 +123,6 @@ export default async function handler(req, res) {
       if (c.documents) richData.documents = c.documents;
       if (c.co_borrowers) richData.co_borrowers = c.co_borrowers;
       if (c.shared_loan) richData.shared_loan = c.shared_loan;
-      // Borrower personal fields that don't have dedicated columns
       var personalFields = [
         'first_name','middle_initial','last_name',
         'own_rent','own_or_rent','monthly_payment','retain_sell','retain_or_sell',
@@ -142,7 +139,9 @@ export default async function handler(req, res) {
         name: c.name,
         email: c.email || null,
         phone: c.phone || null,
-        type: c.type || 'other',
+        type: c.type || c.root_type || 'other',
+        root_type: c.root_type || c.type || 'other',
+        designations: c.designations || [],
         custom_type: c.custom_type || c.customType || null,
         company: c.company || null,
         address: c.address || null,
@@ -172,21 +171,29 @@ export default async function handler(req, res) {
       var existing = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + c.id);
 
       if (existing && existing.length > 0) {
-        // Update
+        // Update — don't overwrite root_type if not provided
+        if (!c.root_type && existing[0].root_type) {
+          row.root_type = existing[0].root_type;
+        }
+        // Don't overwrite ae_id
+        delete row.ae_id;
         await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + c.id, 'PATCH', row);
       } else {
-        // Insert
+        // Insert — generate AE ID for new contacts
+        row.ae_id = c.ae_id || await generateAeId();
         row.created_at = c.createdAt || new Date().toISOString();
+        if (!row.root_type || row.root_type === 'other') {
+          row.root_type = c.root_type || c.type || 'client';
+        }
         await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts', 'POST', row);
       }
 
-      return res.status(200).json({ success: true, id: c.id });
+      return res.status(200).json({ success: true, id: c.id, ae_id: row.ae_id || null });
 
     // --- DELETE ---
     } else if (action === 'delete') {
       var crmId = req.body.crmId;
       if (!crmId) return res.status(400).json({ success: false, message: 'Missing crmId' });
-
       await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + crmId, 'DELETE');
       return res.status(200).json({ success: true });
 
@@ -194,7 +201,6 @@ export default async function handler(req, res) {
     } else if (action === 'addActivity') {
       var a = req.body.activity;
       if (!a || !a.crm_id) return res.status(400).json({ success: false, message: 'Missing activity data' });
-
       await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_activity', 'POST', {
         crm_id: a.crm_id,
         type: a.type || 'note',
@@ -202,47 +208,92 @@ export default async function handler(req, res) {
         body: a.body || null,
         date: a.date || new Date().toISOString()
       });
-
       return res.status(200).json({ success: true });
 
-    // --- AUTO-SYNC FROM PIPELINE ---
-    } else if (action === 'syncFromPipeline') {
+    // --- PIPELINE LINK ---
+    } else if (action === 'pipelineLink') {
       var p = req.body;
-      if (!p.name) return res.status(200).json({ success: true, message: 'No name to sync' });
+      if (!p.pipelineId || !p.name) {
+        return res.status(400).json({ success: false, message: 'Missing pipelineId or name' });
+      }
 
-      // Check if already in CRM by pipeline_id
+      // Check if already linked
       var byPipeline = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?pipeline_id=eq.' + p.pipelineId);
       if (byPipeline && byPipeline.length > 0) {
-        return res.status(200).json({ success: true, crmId: byPipeline[0].id, message: 'Already linked' });
+        return res.status(200).json({ success: true, crmId: byPipeline[0].id, ae_id: byPipeline[0].ae_id, message: 'Already linked' });
       }
 
       // Check by name + email match
       if (p.email) {
         var byEmail = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?name=ilike.' + encodeURIComponent(p.name) + '&email=ilike.' + encodeURIComponent(p.email));
         if (byEmail && byEmail.length > 0) {
+          // Add borrower designation if not already there
+          var existingDesignations = byEmail[0].designations || [];
+          if (existingDesignations.indexOf('borrower') === -1) {
+            existingDesignations.push('borrower');
+          }
           await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + byEmail[0].id, 'PATCH', {
             pipeline_id: p.pipelineId,
+            designations: existingDesignations,
             updated_at: new Date().toISOString()
           });
-          return res.status(200).json({ success: true, crmId: byEmail[0].id, message: 'Linked existing' });
+          return res.status(200).json({ success: true, crmId: byEmail[0].id, ae_id: byEmail[0].ae_id, message: 'Linked existing' });
         }
       }
 
-      // Create new CRM entry
+      // Create new CRM entry with AE ID
+      var newAeId = await generateAeId();
       var newId = 'crm-' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
       await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts', 'POST', {
         id: newId,
+        ae_id: newAeId,
         name: p.name,
         email: p.email || null,
         phone: p.phone || null,
         type: 'client',
+        root_type: 'client',
+        designations: ['borrower'],
         source: 'pipeline',
         pipeline_id: p.pipelineId,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       });
 
-      return res.status(200).json({ success: true, crmId: newId, message: 'Created new' });
+      return res.status(200).json({ success: true, crmId: newId, ae_id: newAeId, message: 'Created new' });
+
+    // --- ADD DESIGNATION ---
+    } else if (action === 'addDesignation') {
+      var adId = req.body.crm_id;
+      var designation = req.body.designation;
+      if (!adId || !designation) return res.status(400).json({ success: false, message: 'Missing crm_id or designation' });
+
+      var adContact = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + adId + '&select=id,designations');
+      if (!adContact || adContact.length === 0) return res.status(404).json({ success: false, message: 'Contact not found' });
+
+      var desigs = adContact[0].designations || [];
+      if (desigs.indexOf(designation) === -1) {
+        desigs.push(designation);
+        await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + adId, 'PATCH', {
+          designations: desigs, updated_at: new Date().toISOString()
+        });
+      }
+      return res.status(200).json({ success: true, designations: desigs });
+
+    // --- REMOVE DESIGNATION ---
+    } else if (action === 'removeDesignation') {
+      var rdId = req.body.crm_id;
+      var rdDesig = req.body.designation;
+      if (!rdId || !rdDesig) return res.status(400).json({ success: false, message: 'Missing crm_id or designation' });
+
+      var rdContact = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + rdId + '&select=id,designations');
+      if (!rdContact || rdContact.length === 0) return res.status(404).json({ success: false, message: 'Contact not found' });
+
+      var rdDesigs = rdContact[0].designations || [];
+      rdDesigs = rdDesigs.filter(function(d) { return d !== rdDesig; });
+      await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + rdId, 'PATCH', {
+        designations: rdDesigs, updated_at: new Date().toISOString()
+      });
+      return res.status(200).json({ success: true, designations: rdDesigs });
 
     // --- SEND EMAIL + LOG ---
     } else if (action === 'sendEmail') {
@@ -250,7 +301,6 @@ export default async function handler(req, res) {
       if (!e.to || !e.subject || !e.body) {
         return res.status(400).json({ success: false, message: 'Missing to, subject, or body' });
       }
-
       var resendKey = process.env.RESEND_API_KEY;
       if (!resendKey) return res.status(500).json({ success: false, message: 'Resend not configured' });
 
@@ -265,112 +315,123 @@ export default async function handler(req, res) {
           html: e.body
         })
       });
-
       var sendData = await sendResp.json();
       if (!sendResp.ok) {
         return res.status(500).json({ success: false, message: sendData.message || 'Send failed' });
       }
-
       if (e.crm_id) {
         await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_activity', 'POST', {
-          crm_id: e.crm_id,
-          type: 'email_sent',
-          subject: e.subject,
-          body: e.bodyPreview || e.subject,
-          date: new Date().toISOString()
+          crm_id: e.crm_id, type: 'email_sent', subject: e.subject,
+          body: e.bodyPreview || e.subject, date: new Date().toISOString()
         });
       }
-
       return res.status(200).json({ success: true, emailId: sendData.id });
 
     // --- CLEAR LINK ---
-    // Remove linked_to and relationship from a co-borrower's CRM record
     } else if (action === 'clearLink') {
       var clearId = req.body.crm_id;
       if (!clearId) return res.status(400).json({ success: false, message: 'Missing crm_id' });
-
-      // Fetch current data
       var clearContact = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + clearId + '&select=id,data');
       if (clearContact && clearContact.length > 0) {
         var cData = clearContact[0].data || {};
         delete cData.linked_to;
         delete cData.relationship;
         await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + clearId, 'PATCH', {
-          data: cData,
-          updated_at: new Date().toISOString()
+          data: cData, updated_at: new Date().toISOString()
         });
       }
       return res.status(200).json({ success: true, message: 'Link cleared' });
 
     // --- GET LINKED CONTACTS ---
-    // Find CRM-level relationships: who this contact is linked to + who lists this contact as a co-borrower
     } else if (action === 'getLinkedContacts') {
       var linkId = req.body.crm_id;
       if (!linkId) return res.status(400).json({ success: false, message: 'Missing crm_id' });
 
       var results = [];
-
-      // 1) Check if this contact has a linked_to field (they are a co-borrower on someone else's card)
-      // We already have this from the contact's own data, but let's also fetch the linked-to contact's name
       var thisContact = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + linkId + '&select=id,name,data');
       if (thisContact && thisContact.length > 0) {
         var myData = thisContact[0].data;
         if (myData && myData.linked_to) {
-          var linkedTo = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + myData.linked_to + '&select=id,name,type,phone,email');
+          var linkedTo = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + myData.linked_to + '&select=id,name,type,root_type,phone,email,ae_id');
           if (linkedTo && linkedTo.length > 0) {
             results.push({
-              direction: 'linked_to',
-              contact_id: linkedTo[0].id,
-              contact_name: linkedTo[0].name,
-              contact_type: linkedTo[0].type,
-              relationship: myData.relationship || ''
+              direction: 'linked_to', contact_id: linkedTo[0].id,
+              contact_name: linkedTo[0].name, contact_type: linkedTo[0].root_type || linkedTo[0].type,
+              ae_id: linkedTo[0].ae_id || '', relationship: myData.relationship || ''
             });
           }
         }
       }
 
-      // 2) Find contacts whose co_borrowers array contains this contact's ID
-      // Supabase JSONB containment: data->'co_borrowers' @> '[{"contact_id":"xxx"}]'
-      var coBorrowerOf = await supaGet(SUPABASE_URL, SUPABASE_KEY, 
-        '/rest/v1/crm_contacts?select=id,name,type,phone,email&data->>linked_to=eq.' + linkId);
-      
-      // Also find contacts whose co_borrowers array has contact_id matching this ID
+      var coBorrowerOf = await supaGet(SUPABASE_URL, SUPABASE_KEY,
+        '/rest/v1/crm_contacts?select=id,name,type,root_type,phone,email,ae_id&data->>linked_to=eq.' + linkId);
       var coBorrowerOf2 = await supaGet(SUPABASE_URL, SUPABASE_KEY,
-        '/rest/v1/crm_contacts?select=id,name,type,data&data->co_borrowers=cs.[{"contact_id":"' + linkId + '"}]');
+        '/rest/v1/crm_contacts?select=id,name,type,root_type,data,ae_id&data->co_borrowers=cs.[{"contact_id":"' + linkId + '"}]');
 
       var seen = {};
       (coBorrowerOf || []).forEach(function(c) {
         if (c.id !== linkId && !seen[c.id]) {
           seen[c.id] = true;
-          results.push({
-            direction: 'linked_from',
-            contact_id: c.id,
-            contact_name: c.name,
-            contact_type: c.type,
-            relationship: ''
-          });
+          results.push({ direction: 'linked_from', contact_id: c.id,
+            contact_name: c.name, contact_type: c.root_type || c.type,
+            ae_id: c.ae_id || '', relationship: '' });
         }
       });
       (coBorrowerOf2 || []).forEach(function(c) {
         if (c.id !== linkId && !seen[c.id]) {
           seen[c.id] = true;
-          // Find this contact's relationship from the co_borrowers array
           var rel = '';
           if (c.data && c.data.co_borrowers) {
             var match = c.data.co_borrowers.find(function(cb) { return cb.contact_id === linkId; });
             if (match) rel = match.relationship || '';
           }
-          results.push({
-            direction: 'co_borrower_on',
-            contact_id: c.id,
-            contact_name: c.name,
-            contact_type: c.type,
-            relationship: rel
-          });
+          results.push({ direction: 'co_borrower_on', contact_id: c.id,
+            contact_name: c.name, contact_type: c.root_type || c.type,
+            ae_id: c.ae_id || '', relationship: rel });
         }
       });
 
       return res.status(200).json({ success: true, links: results });
+
+    // --- CREATE LINKED CONTACT (spouse/co-borrower with auto-populate) ---
+    } else if (action === 'createLinkedContact') {
+      var lc = req.body;
+      if (!lc.source_crm_id || !lc.name) {
+        return res.status(400).json({ success: false, message: 'Missing source_crm_id or name' });
+      }
+
+      // Fetch source contact for auto-populate
+      var sourceContact = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + lc.source_crm_id);
+      var src = (sourceContact && sourceContact.length > 0) ? sourceContact[0] : {};
+
+      var newId = 'crm-' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+      var newAeId = await generateAeId();
+      var newRootType = lc.root_type || 'client';
+
+      // Auto-populate shared fields from source
+      var newContact = {
+        id: newId,
+        ae_id: newAeId,
+        name: lc.name,
+        email: lc.email || null,
+        phone: lc.phone || null,
+        type: newRootType,
+        root_type: newRootType,
+        designations: lc.designations || [],
+        company: src.company || null,
+        address: src.address || null,
+        city: src.city || null,
+        state: src.state || null,
+        zip: src.zip || null,
+        source: 'linked_contact',
+        data: { linked_to: lc.source_crm_id, relationship: lc.relationship || 'spouse' },
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+
+      await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts', 'POST', newContact);
+
+      return res.status(200).json({ success: true, id: newId, ae_id: newAeId });
 
     } else {
       return res.status(400).json({ error: 'Unknown action: ' + action });
@@ -382,29 +443,39 @@ export default async function handler(req, res) {
   }
 }
 
+// ===== UNPACK JSONB DATA =====
+function unpackData(c) {
+  if (c.data && typeof c.data === 'object') {
+    var richData = c.data;
+    Object.keys(richData).forEach(function(k) {
+      if (c[k] === undefined || c[k] === null) c[k] = richData[k];
+    });
+    if (richData.employers) c.employers = richData.employers;
+    if (richData.education) c.education = richData.education;
+    if (richData.assets) c.assets = richData.assets;
+    if (richData.reos) c.reos = richData.reos;
+    if (richData.documents) c.documents = richData.documents;
+    if (richData.co_borrowers) c.co_borrowers = richData.co_borrowers;
+    if (richData.shared_loan) c.shared_loan = richData.shared_loan;
+  }
+  // Ensure designations is always an array
+  if (!c.designations) c.designations = [];
+  // Ensure root_type falls back to type
+  if (!c.root_type && c.type) c.root_type = c.type;
+}
+
 // ===== SUPABASE HELPERS =====
 async function supaGet(url, key, path) {
   var resp = await fetch(url + path, {
-    headers: {
-      'apikey': key,
-      'Authorization': 'Bearer ' + key,
-      'Content-Type': 'application/json'
-    }
+    headers: { 'apikey': key, 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' }
   });
   return await resp.json();
 }
 
 async function supaFetch(url, key, path, method, body) {
-  var headers = {
-    'apikey': key,
-    'Authorization': 'Bearer ' + key,
-    'Content-Type': 'application/json',
-    'Prefer': 'return=minimal'
-  };
+  var headers = { 'apikey': key, 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' };
   var opts = { method: method, headers: headers };
-  if (body && (method === 'POST' || method === 'PATCH')) {
-    opts.body = JSON.stringify(body);
-  }
+  if (body && (method === 'POST' || method === 'PATCH')) { opts.body = JSON.stringify(body); }
   var resp = await fetch(url + path, opts);
   if (!resp.ok) {
     var errText = await resp.text();
