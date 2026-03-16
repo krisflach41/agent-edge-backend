@@ -85,6 +85,23 @@ export default async function handler(req, res) {
         url += '&or=(name.ilike.*' + q + '*,email.ilike.*' + q + '*,phone.ilike.*' + q + '*,company.ilike.*' + q + '*,tags.ilike.*' + q + '*,ae_id.ilike.*' + q + '*)';
       }
 
+      // Audience filters
+      if (req.query.source) {
+        url += '&source=eq.' + req.query.source;
+      }
+      if (req.query.state) {
+        url += '&state=ilike.' + req.query.state;
+      }
+      if (req.query.zip) {
+        url += '&zip=eq.' + req.query.zip;
+      }
+      if (req.query.city) {
+        url += '&city=ilike.*' + req.query.city + '*';
+      }
+      if (req.query.company) {
+        url += '&company=ilike.*' + req.query.company + '*';
+      }
+
       var contacts = await supaGet(SUPABASE_URL, SUPABASE_KEY, url);
       (contacts || []).forEach(function(c) { unpackData(c); });
       return res.status(200).json({ success: true, contacts: contacts || [] });
@@ -432,6 +449,31 @@ export default async function handler(req, res) {
       await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts', 'POST', newContact);
 
       return res.status(200).json({ success: true, id: newId, ae_id: newAeId });
+
+    } else if (action === 'listGroups') {
+      var groups = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/ae_audience_groups?order=created_at.desc');
+      return res.status(200).json({ success: true, groups: groups || [] });
+
+    } else if (action === 'saveGroup') {
+      var grp = req.body.group;
+      if (!grp || !grp.name) return res.status(400).json({ success: false, message: 'Group name required' });
+      var groupId = 'grp_' + Date.now();
+      var now = new Date().toISOString();
+      await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/ae_audience_groups', 'POST', {
+        id: groupId,
+        name: grp.name,
+        filters: grp.filters || {},
+        contact_count: grp.contact_count || 0,
+        created_at: now,
+        updated_at: now
+      });
+      return res.status(200).json({ success: true, id: groupId });
+
+    } else if (action === 'deleteGroup') {
+      var gid = req.body.groupId;
+      if (!gid) return res.status(400).json({ success: false, message: 'groupId required' });
+      await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/ae_audience_groups?id=eq.' + gid, 'DELETE');
+      return res.status(200).json({ success: true });
 
     } else {
       return res.status(400).json({ error: 'Unknown action: ' + action });
