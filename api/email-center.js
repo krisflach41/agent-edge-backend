@@ -180,10 +180,12 @@ export default async function handler(req, res) {
           return {
             campaign_id: campId,
             step_order: i + 1,
+            step_type: s.step_type || 'email',
             delay_days: s.delay_days || 0,
             template_id: s.template_id || null,
             subject_override: s.subject_override || '',
-            body_override: s.body_override || ''
+            body_override: s.body_override || '',
+            sms_body: s.sms_body || ''
           };
         });
         if (stepRows.length > 0) {
@@ -624,27 +626,94 @@ async function processDrips(res) {
       }
 
       // Get subject and body (override or template)
-      var subject = step.subject_override || step.ae_email_templates?.subject || 'Message from your Loan Officer';
-      var bodyHtml = step.body_override || step.ae_email_templates?.body_html || '';
+      var stepType = step.step_type || 'email';
+      var result;
 
-      if (!bodyHtml) continue;
+      if (stepType === 'sms') {
+        // SMS step — send via Telnyx
+        var smsText = step.sms_body || '';
+        if (!smsText) continue;
 
-      // Personalize
-      subject = personalize(subject, enrollment.contact_name, enrollment.contact_email);
-      bodyHtml = personalize(bodyHtml, enrollment.contact_name, enrollment.contact_email);
+        // Personalize
+        smsText = personalize(smsText, enrollment.contact_name, enrollment.contact_email);
 
-      // Send
-      var result = await sendEmail(
-        loUserId,
-        enrollment.contact_email,
-        enrollment.contact_name,
-        subject,
-        bodyHtml,
-        step.template_id,
-        enrollment.campaign_id,
-        enrollment.id,
-        nextStepOrder
-      );
+        // Look up contact phone from CRM
+        var contactPhone = enrollment.contact_phone || '';
+        if (!contactPhone) {
+          const { data: contact } = await supabase
+            .from('crm_contacts')
+            .select('phone')
+            .ilike('email', enrollment.contact_email)
+            .maybeSingle();
+          if (contact && contact.phone) contactPhone = contact.phone;
+        }
+
+        if (!contactPhone) {
+          // No phone number — skip this step but advance
+          result = { success: true, skipped: 'no_phone' };
+        } else {
+          // Send SMS via Telnyx
+          try {
+            var telnyxKey = process.env.TELNYX_API_KEY;
+            var telnyxFrom = process.env.TELNYX_FROM_NUMBER;
+            var cleanTo = contactPhone.replace(/[^0-9+]/g, '');
+            if (!cleanTo.startsWith('+')) {
+              if (cleanTo.startsWith('1') && cleanTo.length === 11) cleanTo = '+' + cleanTo;
+              else if (cleanTo.length === 10) cleanTo = '+1' + cleanTo;
+            }
+
+            var smsResp = await fetch('https://api.telnyx.com/v2/messages', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + telnyxKey },
+              body: JSON.stringify({ from: telnyxFrom, to: cleanTo, text: smsText })
+            });
+            var smsData = await smsResp.json();
+
+            // Log to email_log so analytics track it
+            try {
+              await supabase.from('ae_email_log').insert({
+                lo_user_id: loUserId,
+                to_email: enrollment.contact_email,
+                to_name: enrollment.contact_name,
+                subject: 'SMS: ' + smsText.substring(0, 50),
+                campaign_id: enrollment.campaign_id,
+                enrollment_id: enrollment.id,
+                step_order: nextStepOrder,
+                resend_id: smsData.data?.id || '',
+                status: smsResp.ok ? 'sent' : 'failed'
+              });
+            } catch (logErr) { console.error('SMS log error:', logErr); }
+
+            result = { success: smsResp.ok };
+          } catch (smsErr) {
+            console.error('SMS send error:', smsErr);
+            result = { success: false };
+          }
+        }
+      } else {
+        // Email step
+        var subject = step.subject_override || step.ae_email_templates?.subject || 'Message from your Loan Officer';
+        var bodyHtml = step.body_override || step.ae_email_templates?.body_html || '';
+
+        if (!bodyHtml) continue;
+
+        // Personalize
+        subject = personalize(subject, enrollment.contact_name, enrollment.contact_email);
+        bodyHtml = personalize(bodyHtml, enrollment.contact_name, enrollment.contact_email);
+
+        // Send
+        result = await sendEmail(
+          loUserId,
+          enrollment.contact_email,
+          enrollment.contact_name,
+          subject,
+          bodyHtml,
+          step.template_id,
+          enrollment.campaign_id,
+          enrollment.id,
+          nextStepOrder
+        );
+      }
 
       if (result.success) {
         // Get next step to calculate next_send_at
