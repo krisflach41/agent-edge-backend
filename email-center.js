@@ -180,10 +180,12 @@ export default async function handler(req, res) {
           return {
             campaign_id: campId,
             step_order: i + 1,
+            step_type: s.step_type || 'email',
             delay_days: s.delay_days || 0,
             template_id: s.template_id || null,
             subject_override: s.subject_override || '',
-            body_override: s.body_override || ''
+            body_override: s.body_override || '',
+            sms_body: s.sms_body || ''
           };
         });
         if (stepRows.length > 0) {
@@ -346,19 +348,82 @@ export default async function handler(req, res) {
 
       const { data: logs, error } = await supabase
         .from('ae_email_log')
-        .select('status, opened_at')
+        .select('status, opened_at, clicked_at')
         .eq('lo_user_id', loUserId)
         .gte('sent_at', monthStart);
 
       if (error) return res.status(500).json({ success: false, message: error.message });
 
       var total = (logs || []).length;
+      var delivered = (logs || []).filter(function(l) { return l.status === 'delivered' || l.status === 'sent'; }).length;
       var opened = (logs || []).filter(function(l) { return l.opened_at; }).length;
-      var openRate = total > 0 ? Math.round((opened / total) * 100) : 0;
+      var clicked = (logs || []).filter(function(l) { return l.clicked_at; }).length;
+      var bounced = (logs || []).filter(function(l) { return l.status === 'bounced'; }).length;
+      var openRate = delivered > 0 ? Math.round((opened / delivered) * 100) : 0;
+      var clickRate = delivered > 0 ? Math.round((clicked / delivered) * 100) : 0;
 
       return res.status(200).json({
         success: true,
-        stats: { sent_this_month: total, open_rate: openRate, opened: opened }
+        stats: { sent_this_month: total, delivered: delivered, open_rate: openRate, click_rate: clickRate, opened: opened, clicked: clicked, bounced: bounced }
+      });
+    }
+
+    if (action === 'campaign_stats') {
+      var campId = req.query?.campaign_id || req.body?.campaign_id;
+      if (!campId) return res.status(400).json({ success: false, message: 'campaign_id required' });
+
+      const { data: logs, error } = await supabase
+        .from('ae_email_log')
+        .select('status, opened_at, clicked_at, to_email, subject, sent_at, step_order')
+        .eq('campaign_id', parseInt(campId));
+
+      if (error) return res.status(500).json({ success: false, message: error.message });
+
+      var entries = logs || [];
+      var total = entries.length;
+      var delivered = entries.filter(function(l) { return l.status === 'delivered' || l.status === 'sent'; }).length;
+      var opened = entries.filter(function(l) { return l.opened_at; }).length;
+      var clicked = entries.filter(function(l) { return l.clicked_at; }).length;
+      var bounced = entries.filter(function(l) { return l.status === 'bounced'; }).length;
+      var complained = entries.filter(function(l) { return l.status === 'complained'; }).length;
+
+      // Check how many unique emails have unsubscribed
+      var uniqueEmails = [];
+      entries.forEach(function(l) { if (l.to_email && uniqueEmails.indexOf(l.to_email.toLowerCase()) < 0) uniqueEmails.push(l.to_email.toLowerCase()); });
+      var unsubscribed = 0;
+      if (uniqueEmails.length > 0) {
+        const { data: unsubs } = await supabase
+          .from('crm_contacts')
+          .select('email')
+          .eq('unsubscribed', true)
+          .in('email', uniqueEmails);
+        unsubscribed = (unsubs || []).length;
+      }
+
+      var openRate = delivered > 0 ? Math.round((opened / delivered) * 100) : 0;
+      var clickRate = delivered > 0 ? Math.round((clicked / delivered) * 100) : 0;
+      var bounceRate = total > 0 ? Math.round((bounced / total) * 100) : 0;
+
+      // Per-step breakdown
+      var stepMap = {};
+      entries.forEach(function(l) {
+        var step = l.step_order || 0;
+        if (!stepMap[step]) stepMap[step] = { sent: 0, delivered: 0, opened: 0, clicked: 0, bounced: 0 };
+        stepMap[step].sent++;
+        if (l.status === 'delivered' || l.status === 'sent') stepMap[step].delivered++;
+        if (l.opened_at) stepMap[step].opened++;
+        if (l.clicked_at) stepMap[step].clicked++;
+        if (l.status === 'bounced') stepMap[step].bounced++;
+      });
+
+      return res.status(200).json({
+        success: true,
+        stats: {
+          total: total, delivered: delivered, opened: opened, clicked: clicked,
+          bounced: bounced, complained: complained, unsubscribed: unsubscribed,
+          open_rate: openRate, click_rate: clickRate, bounce_rate: bounceRate,
+          per_step: stepMap
+        }
       });
     }
 
@@ -384,8 +449,51 @@ export default async function handler(req, res) {
         return res.status(400).json({ success: false, message: 'to, subject, body_html required' });
       }
 
-      var result = await sendEmail(loUserId, s.to, s.to_name || '', s.subject, s.body_html, s.template_id || null, null, null, null);
-      return res.status(result.success ? 200 : 500).json(result);
+      // Parse recipients — could be comma-separated string or array
+      var recipients = [];
+      if (Array.isArray(s.to)) {
+        recipients = s.to;
+      } else {
+        recipients = s.to.split(',').map(function(e) { return e.trim(); }).filter(function(e) { return e; });
+      }
+
+      // Single recipient — simple send, no campaign
+      if (recipients.length === 1) {
+        var result = await sendEmail(loUserId, recipients[0], s.to_name || '', s.subject, s.body_html, s.template_id || null, null, null, null);
+        return res.status(result.success ? 200 : 500).json(result);
+      }
+
+      // Multiple recipients — create a campaign record so it shows in analytics
+      var now = new Date().toISOString();
+      const { data: camp, error: campErr } = await supabase
+        .from('ae_drip_campaigns')
+        .insert({
+          lo_user_id: loUserId,
+          name: s.subject,
+          description: 'Bulk send to ' + recipients.length + ' contacts',
+          trigger_type: 'manual',
+          status: 'completed',
+          created_at: now,
+          updated_at: now
+        })
+        .select('id')
+        .single();
+
+      if (campErr) {
+        return res.status(500).json({ success: false, message: 'Failed to create campaign: ' + campErr.message });
+      }
+
+      var campaignId = camp.id;
+      var sent = 0;
+      var failed = 0;
+
+      for (var i = 0; i < recipients.length; i++) {
+        var email = recipients[i];
+        var sendResult = await sendEmail(loUserId, email, '', s.subject, s.body_html, s.template_id || null, campaignId, null, 1);
+        if (sendResult.success) { sent++; } else { failed++; }
+      }
+
+      return res.status(200).json({ success: true, campaign_id: campaignId, sent: sent, failed: failed, total: recipients.length });
     }
 
     // =====================
@@ -518,27 +626,94 @@ async function processDrips(res) {
       }
 
       // Get subject and body (override or template)
-      var subject = step.subject_override || step.ae_email_templates?.subject || 'Message from your Loan Officer';
-      var bodyHtml = step.body_override || step.ae_email_templates?.body_html || '';
+      var stepType = step.step_type || 'email';
+      var result;
 
-      if (!bodyHtml) continue;
+      if (stepType === 'sms') {
+        // SMS step — send via Telnyx
+        var smsText = step.sms_body || '';
+        if (!smsText) continue;
 
-      // Personalize
-      subject = personalize(subject, enrollment.contact_name, enrollment.contact_email);
-      bodyHtml = personalize(bodyHtml, enrollment.contact_name, enrollment.contact_email);
+        // Personalize
+        smsText = personalize(smsText, enrollment.contact_name, enrollment.contact_email);
 
-      // Send
-      var result = await sendEmail(
-        loUserId,
-        enrollment.contact_email,
-        enrollment.contact_name,
-        subject,
-        bodyHtml,
-        step.template_id,
-        enrollment.campaign_id,
-        enrollment.id,
-        nextStepOrder
-      );
+        // Look up contact phone from CRM
+        var contactPhone = enrollment.contact_phone || '';
+        if (!contactPhone) {
+          const { data: contact } = await supabase
+            .from('crm_contacts')
+            .select('phone')
+            .ilike('email', enrollment.contact_email)
+            .maybeSingle();
+          if (contact && contact.phone) contactPhone = contact.phone;
+        }
+
+        if (!contactPhone) {
+          // No phone number — skip this step but advance
+          result = { success: true, skipped: 'no_phone' };
+        } else {
+          // Send SMS via Telnyx
+          try {
+            var telnyxKey = process.env.TELNYX_API_KEY;
+            var telnyxFrom = process.env.TELNYX_FROM_NUMBER;
+            var cleanTo = contactPhone.replace(/[^0-9+]/g, '');
+            if (!cleanTo.startsWith('+')) {
+              if (cleanTo.startsWith('1') && cleanTo.length === 11) cleanTo = '+' + cleanTo;
+              else if (cleanTo.length === 10) cleanTo = '+1' + cleanTo;
+            }
+
+            var smsResp = await fetch('https://api.telnyx.com/v2/messages', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + telnyxKey },
+              body: JSON.stringify({ from: telnyxFrom, to: cleanTo, text: smsText })
+            });
+            var smsData = await smsResp.json();
+
+            // Log to email_log so analytics track it
+            try {
+              await supabase.from('ae_email_log').insert({
+                lo_user_id: loUserId,
+                to_email: enrollment.contact_email,
+                to_name: enrollment.contact_name,
+                subject: 'SMS: ' + smsText.substring(0, 50),
+                campaign_id: enrollment.campaign_id,
+                enrollment_id: enrollment.id,
+                step_order: nextStepOrder,
+                resend_id: smsData.data?.id || '',
+                status: smsResp.ok ? 'sent' : 'failed'
+              });
+            } catch (logErr) { console.error('SMS log error:', logErr); }
+
+            result = { success: smsResp.ok };
+          } catch (smsErr) {
+            console.error('SMS send error:', smsErr);
+            result = { success: false };
+          }
+        }
+      } else {
+        // Email step
+        var subject = step.subject_override || step.ae_email_templates?.subject || 'Message from your Loan Officer';
+        var bodyHtml = step.body_override || step.ae_email_templates?.body_html || '';
+
+        if (!bodyHtml) continue;
+
+        // Personalize
+        subject = personalize(subject, enrollment.contact_name, enrollment.contact_email);
+        bodyHtml = personalize(bodyHtml, enrollment.contact_name, enrollment.contact_email);
+
+        // Send
+        result = await sendEmail(
+          loUserId,
+          enrollment.contact_email,
+          enrollment.contact_name,
+          subject,
+          bodyHtml,
+          step.template_id,
+          enrollment.campaign_id,
+          enrollment.id,
+          nextStepOrder
+        );
+      }
 
       if (result.success) {
         // Get next step to calculate next_send_at
