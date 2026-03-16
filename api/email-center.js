@@ -346,19 +346,82 @@ export default async function handler(req, res) {
 
       const { data: logs, error } = await supabase
         .from('ae_email_log')
-        .select('status, opened_at')
+        .select('status, opened_at, clicked_at')
         .eq('lo_user_id', loUserId)
         .gte('sent_at', monthStart);
 
       if (error) return res.status(500).json({ success: false, message: error.message });
 
       var total = (logs || []).length;
+      var delivered = (logs || []).filter(function(l) { return l.status === 'delivered' || l.status === 'sent'; }).length;
       var opened = (logs || []).filter(function(l) { return l.opened_at; }).length;
-      var openRate = total > 0 ? Math.round((opened / total) * 100) : 0;
+      var clicked = (logs || []).filter(function(l) { return l.clicked_at; }).length;
+      var bounced = (logs || []).filter(function(l) { return l.status === 'bounced'; }).length;
+      var openRate = delivered > 0 ? Math.round((opened / delivered) * 100) : 0;
+      var clickRate = delivered > 0 ? Math.round((clicked / delivered) * 100) : 0;
 
       return res.status(200).json({
         success: true,
-        stats: { sent_this_month: total, open_rate: openRate, opened: opened }
+        stats: { sent_this_month: total, delivered: delivered, open_rate: openRate, click_rate: clickRate, opened: opened, clicked: clicked, bounced: bounced }
+      });
+    }
+
+    if (action === 'campaign_stats') {
+      var campId = req.query?.campaign_id || req.body?.campaign_id;
+      if (!campId) return res.status(400).json({ success: false, message: 'campaign_id required' });
+
+      const { data: logs, error } = await supabase
+        .from('ae_email_log')
+        .select('status, opened_at, clicked_at, to_email, subject, sent_at, step_order')
+        .eq('campaign_id', parseInt(campId));
+
+      if (error) return res.status(500).json({ success: false, message: error.message });
+
+      var entries = logs || [];
+      var total = entries.length;
+      var delivered = entries.filter(function(l) { return l.status === 'delivered' || l.status === 'sent'; }).length;
+      var opened = entries.filter(function(l) { return l.opened_at; }).length;
+      var clicked = entries.filter(function(l) { return l.clicked_at; }).length;
+      var bounced = entries.filter(function(l) { return l.status === 'bounced'; }).length;
+      var complained = entries.filter(function(l) { return l.status === 'complained'; }).length;
+
+      // Check how many unique emails have unsubscribed
+      var uniqueEmails = [];
+      entries.forEach(function(l) { if (l.to_email && uniqueEmails.indexOf(l.to_email.toLowerCase()) < 0) uniqueEmails.push(l.to_email.toLowerCase()); });
+      var unsubscribed = 0;
+      if (uniqueEmails.length > 0) {
+        const { data: unsubs } = await supabase
+          .from('crm_contacts')
+          .select('email')
+          .eq('unsubscribed', true)
+          .in('email', uniqueEmails);
+        unsubscribed = (unsubs || []).length;
+      }
+
+      var openRate = delivered > 0 ? Math.round((opened / delivered) * 100) : 0;
+      var clickRate = delivered > 0 ? Math.round((clicked / delivered) * 100) : 0;
+      var bounceRate = total > 0 ? Math.round((bounced / total) * 100) : 0;
+
+      // Per-step breakdown
+      var stepMap = {};
+      entries.forEach(function(l) {
+        var step = l.step_order || 0;
+        if (!stepMap[step]) stepMap[step] = { sent: 0, delivered: 0, opened: 0, clicked: 0, bounced: 0 };
+        stepMap[step].sent++;
+        if (l.status === 'delivered' || l.status === 'sent') stepMap[step].delivered++;
+        if (l.opened_at) stepMap[step].opened++;
+        if (l.clicked_at) stepMap[step].clicked++;
+        if (l.status === 'bounced') stepMap[step].bounced++;
+      });
+
+      return res.status(200).json({
+        success: true,
+        stats: {
+          total: total, delivered: delivered, opened: opened, clicked: clicked,
+          bounced: bounced, complained: complained, unsubscribed: unsubscribed,
+          open_rate: openRate, click_rate: clickRate, bounce_rate: bounceRate,
+          per_step: stepMap
+        }
       });
     }
 
@@ -409,13 +472,25 @@ async function sendEmail(loUserId, toEmail, toName, subject, bodyHtml, templateI
   var resendKey = process.env.RESEND_API_KEY;
   if (!resendKey) return { success: false, message: 'Resend API key not configured' };
 
+  // Check if contact has unsubscribed
+  try {
+    const { data: contact } = await supabase
+      .from('crm_contacts')
+      .select('unsubscribed')
+      .eq('email', toEmail)
+      .maybeSingle();
+    if (contact && contact.unsubscribed) {
+      return { success: false, message: 'Contact has unsubscribed', unsubscribed: true };
+    }
+  } catch (e) { /* If lookup fails, proceed with send */ }
+
   // TODO: For multi-tenant, look up LO's from address and signature from their profile
   // For now, use Kristy's config
   var fromAddress = 'Kristy Flach <kflach@kristyflach.com>';
   var replyTo = 'KFlach@prmg.net';
 
   // Build full HTML with wrapper
-  var fullHtml = buildEmailWrapper(bodyHtml);
+  var fullHtml = buildEmailWrapper(bodyHtml, toEmail);
 
   try {
     var response = await fetch('https://api.resend.com/emails', {
@@ -573,21 +648,63 @@ function personalize(text, name, email) {
 }
 
 // ===== EMAIL WRAPPER =====
-function buildEmailWrapper(bodyHtml) {
+function buildEmailWrapper(bodyHtml, toEmail) {
+  var unsubUrl = 'https://agent-edge-backend.vercel.app/api/unsubscribe?email=' + encodeURIComponent(toEmail || '');
+  var baseUrl = 'https://kristyflach.com';
+
   return '<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>' +
     '<body style="font-family: Arial, Helvetica, sans-serif; color: #333333; margin: 0; padding: 20px; background-color: #f9f9f9;">' +
     '<table cellpadding="0" cellspacing="0" border="0" style="max-width: 600px; margin: 0 auto; background: #ffffff; padding: 30px; border-radius: 4px;">' +
     '<tr><td>' +
+
+    // Email body
     '<div style="font-size: 14px; line-height: 1.6; color: #333333; padding-bottom: 24px; border-bottom: 1px solid #eeeeee; margin-bottom: 20px;">' +
     bodyHtml +
     '</div>' +
+
+    // Signature block
+    '<table cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 20px;"><tr>' +
+    '<td style="vertical-align: top; padding-right: 16px;">' +
+    '<img src="' + baseUrl + '/hero-headshot.jpg" alt="Kristy Flach" width="80" height="80" style="border-radius: 50%; display: block;" />' +
+    '</td>' +
+    '<td style="vertical-align: top; font-size: 13px; line-height: 1.5; color: #333333;">' +
+    '<div style="font-weight: bold; font-size: 14px; color: #002556;">Kristy Flach</div>' +
+    '<div style="color: #555555;">Certified Mortgage Advisor &amp; Loan Officer</div>' +
+    '<div style="color: #888888; font-size: 12px;">NMLS ID# 2632259</div>' +
+    '<div style="margin-top: 6px;">' +
+    '<a href="tel:+12063135883" style="color: #002556; text-decoration: none;">(206) 313-5883</a>' +
+    '</div>' +
+    '<div>' +
+    '<a href="mailto:kflach@prmg.net" style="color: #002556; text-decoration: none;">kflach@prmg.net</a>' +
+    '</div>' +
+    '<div style="margin-top: 4px;">' +
+    '<a href="https://kflach.myprmg.net" style="color: #002556; text-decoration: none; font-size: 12px;">kflach.myprmg.net</a>' +
+    ' &nbsp;|&nbsp; ' +
+    '<a href="https://kristyflach.com" style="color: #002556; text-decoration: none; font-size: 12px;">kristyflach.com</a>' +
+    '</div>' +
+    '</td>' +
+    '</tr></table>' +
+
+    // PRMG logo and Equal Housing
+    '<table cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 16px;"><tr>' +
+    '<td style="vertical-align: middle; padding-right: 12px;">' +
+    '<img src="' + baseUrl + '/PRMG-Logo.png" alt="PRMG" height="28" style="display: block;" />' +
+    '</td>' +
+    '<td style="vertical-align: middle;">' +
+    '<img src="' + baseUrl + '/equal-housing-logo.png" alt="Equal Housing Opportunity" height="24" style="display: block;" />' +
+    '</td>' +
+    '</tr></table>' +
+
     // Security notice
     '<table cellpadding="0" cellspacing="0" border="0"><tr>' +
     '<td style="border-left: 3px solid #dddddd; padding: 8px 12px; font-size: 11px; line-height: 16px; color: #888888;">' +
     'This message was sent from a marketing platform. For your security, please do not include personal financial information (SSN, account numbers, tax documents) in replies.' +
     '</td></tr></table>' +
+
+    // Unsubscribe
     '<div style="margin-top: 16px; font-size: 11px; color: #999999; text-align: center;">' +
-    '<a href="{{unsubscribe_url}}" style="color: #999999;">Unsubscribe</a>' +
+    '<a href="' + unsubUrl + '" style="color: #999999;">Unsubscribe</a>' +
     '</div>' +
+
     '</td></tr></table></body></html>';
 }
