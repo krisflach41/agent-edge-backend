@@ -447,8 +447,51 @@ export default async function handler(req, res) {
         return res.status(400).json({ success: false, message: 'to, subject, body_html required' });
       }
 
-      var result = await sendEmail(loUserId, s.to, s.to_name || '', s.subject, s.body_html, s.template_id || null, null, null, null);
-      return res.status(result.success ? 200 : 500).json(result);
+      // Parse recipients — could be comma-separated string or array
+      var recipients = [];
+      if (Array.isArray(s.to)) {
+        recipients = s.to;
+      } else {
+        recipients = s.to.split(',').map(function(e) { return e.trim(); }).filter(function(e) { return e; });
+      }
+
+      // Single recipient — simple send, no campaign
+      if (recipients.length === 1) {
+        var result = await sendEmail(loUserId, recipients[0], s.to_name || '', s.subject, s.body_html, s.template_id || null, null, null, null);
+        return res.status(result.success ? 200 : 500).json(result);
+      }
+
+      // Multiple recipients — create a campaign record so it shows in analytics
+      var now = new Date().toISOString();
+      const { data: camp, error: campErr } = await supabase
+        .from('ae_drip_campaigns')
+        .insert({
+          lo_user_id: loUserId,
+          name: s.subject,
+          description: 'Bulk send to ' + recipients.length + ' contacts',
+          trigger_type: 'manual',
+          status: 'completed',
+          created_at: now,
+          updated_at: now
+        })
+        .select('id')
+        .single();
+
+      if (campErr) {
+        return res.status(500).json({ success: false, message: 'Failed to create campaign: ' + campErr.message });
+      }
+
+      var campaignId = camp.id;
+      var sent = 0;
+      var failed = 0;
+
+      for (var i = 0; i < recipients.length; i++) {
+        var email = recipients[i];
+        var sendResult = await sendEmail(loUserId, email, '', s.subject, s.body_html, s.template_id || null, campaignId, null, 1);
+        if (sendResult.success) { sent++; } else { failed++; }
+      }
+
+      return res.status(200).json({ success: true, campaign_id: campaignId, sent: sent, failed: failed, total: recipients.length });
     }
 
     // =====================
