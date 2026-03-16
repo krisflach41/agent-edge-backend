@@ -22,10 +22,25 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { orderId, status, generated_items } = req.body;
+    const { orderId, status, generated_items, action } = req.body;
 
     if (!orderId) {
       return res.status(400).json({ success: false, message: 'Missing orderId' });
+    }
+
+    // DELETE action
+    if (action === 'delete') {
+      const { error } = await supabase
+        .from('orders')
+        .delete()
+        .eq('order_id', orderId);
+
+      if (error) {
+        console.error('Supabase delete error:', error);
+        return res.status(500).json({ success: false, message: 'Failed to delete order' });
+      }
+
+      return res.status(200).json({ success: true, message: 'Order deleted' });
     }
 
     if (!status && generated_items === undefined) {
