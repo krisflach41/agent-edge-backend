@@ -76,28 +76,94 @@ export default async function handler(req, res) {
       aeId = 'AE-' + Date.now().toString().slice(-5);
     }
 
-    // ===== STEP 1: Create CRM contact FIRST =====
-    const { error: crmError } = await supabase
-      .from('crm_contacts')
-      .insert([{
-        id: cleanEmail,
-        name: fullName,
-        email: cleanEmail,
-        company: brokerage,
-        title: title || '',
-        phone: phone || '',
-        website: website || '',
-        type: 'realtor',
-        source: 'portal_signup',
-        ae_id: aeId,
-        created_at: now,
-        updated_at: now
-      }]);
+    // ===== STEP 1: Find or create CRM contact (dedup) =====
+    // Search priority: email > phone > name+company
+    let existingCrm = null;
+    let crmId = null;
 
-    if (crmError) {
-      console.error('CRM contact creation failed:', crmError);
-      if (crmError.code !== '23505') {
-        return res.status(500).json({ success: false, message: 'Failed to create account. Please try again.' });
+    // 1. Email match
+    const { data: byEmail } = await supabase
+      .from('crm_contacts')
+      .select('*')
+      .ilike('email', cleanEmail)
+      .limit(1);
+    if (byEmail && byEmail.length > 0) existingCrm = byEmail[0];
+
+    // 2. Phone match
+    if (!existingCrm && phone) {
+      const cleanPhone = phone.replace(/\D/g, '').slice(-10);
+      if (cleanPhone.length === 10) {
+        const { data: byPhone } = await supabase
+          .from('crm_contacts')
+          .select('*')
+          .ilike('phone', '%' + cleanPhone)
+          .limit(1);
+        if (byPhone && byPhone.length > 0) existingCrm = byPhone[0];
+      }
+    }
+
+    // 3. Name + Company match
+    if (!existingCrm && fullName && brokerage) {
+      const { data: byNameCo } = await supabase
+        .from('crm_contacts')
+        .select('*')
+        .ilike('name', fullName)
+        .ilike('company', '%' + brokerage.replace(/[^a-zA-Z0-9 ]/g, '%') + '%')
+        .limit(1);
+      if (byNameCo && byNameCo.length > 0) existingCrm = byNameCo[0];
+    }
+
+    if (existingCrm) {
+      // UPDATE existing CRM card — preserve id and ae_id, upgrade with signup info
+      crmId = existingCrm.id;
+      aeId = existingCrm.ae_id || aeId; // keep existing ae_id if it has one
+
+      const { error: updateError } = await supabase
+        .from('crm_contacts')
+        .update({
+          email: cleanEmail,
+          name: fullName,
+          company: brokerage,
+          job_title: title || existingCrm.job_title || null,
+          phone: phone || existingCrm.phone || null,
+          website: website || existingCrm.website || null,
+          type: 'realtor',
+          root_type: existingCrm.root_type || 'realtor',
+          source: existingCrm.source ? existingCrm.source + ', portal_signup' : 'portal_signup',
+          ae_id: aeId,
+          updated_at: now
+        })
+        .eq('id', crmId);
+
+      if (updateError) {
+        console.error('CRM contact update failed:', updateError);
+      }
+    } else {
+      // INSERT new CRM card
+      crmId = cleanEmail;
+      const { error: crmError } = await supabase
+        .from('crm_contacts')
+        .insert([{
+          id: crmId,
+          name: fullName,
+          email: cleanEmail,
+          company: brokerage,
+          job_title: title || '',
+          phone: phone || '',
+          website: website || '',
+          type: 'realtor',
+          root_type: 'realtor',
+          source: 'portal_signup',
+          ae_id: aeId,
+          created_at: now,
+          updated_at: now
+        }]);
+
+      if (crmError) {
+        console.error('CRM contact creation failed:', crmError);
+        if (crmError.code !== '23505') {
+          return res.status(500).json({ success: false, message: 'Failed to create account. Please try again.' });
+        }
       }
     }
 
@@ -132,7 +198,7 @@ export default async function handler(req, res) {
       await supabase
         .from('crm_activity')
         .insert([{
-          crm_id: cleanEmail,
+          crm_id: crmId,
           type: 'signup',
           subject: 'New ' + accountLabel + ' Signup',
           body: accountLabel + ' signup — ' + fullName + ' / ' + brokerage + ' [' + aeId + ']',
