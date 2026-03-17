@@ -103,7 +103,7 @@ export default async function handler(req, res) {
 
     // List / search
     try {
-      var url = '/rest/v1/crm_contacts?order=name.asc';
+      var url = '/rest/v1/crm_contacts?order=name.asc&limit=5000';
 
       // Root type filter
       if (req.query.root_type) {
