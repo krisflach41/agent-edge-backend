@@ -1,621 +1,309 @@
-export default async function handler(req, res) {
-  var origin = req.headers.origin || '';
-  var allowedOrigins = ['https://kristyflach.com', 'https://kristyflach41.github.io', 'https://agent-edge-backend.vercel.app'];
-  if (allowedOrigins.indexOf(origin) !== -1) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  } else {
-    res.setHeader('Access-Control-Allow-Origin', 'https://kristyflach.com');
-  }
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+// ===== CRM (SUPABASE) =====
+var crmLoaded = false;
+var crmContacts = [];
+var crmCurrentId = null;
+var crmDirty = false;
+var crmDeleteArmed = false;
 
-  if (req.method === 'OPTIONS') { res.status(200).end(); return; }
+function crmCloseCard() {
+  crmCurrentId = null;
+  crmDirty = false;
+  document.getElementById('crmDetailContent').style.display = 'none';
+  document.getElementById('crmDetailEmpty').style.display = 'flex';
+  // Show New Contact button again
+  var newBtn = document.getElementById('crmNewContactBtn');
+  if (newBtn) newBtn.style.display = '';
+  // Clear co-borrower tabs so they don't bleed into next card
+  var cbTabs = document.getElementById('coBorrowerTabs');
+  if (cbTabs) { cbTabs.style.display = 'none'; cbTabs.innerHTML = ''; }
+  var banner = document.getElementById('crmLoanHistoryBanner');
+  if (banner) { banner.style.display = 'none'; banner.innerHTML = ''; }
+  crmRenderList();
+}
 
-  var SUPABASE_URL = process.env.SUPABASE_URL;
-  var SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
-
-  if (!SUPABASE_URL || !SUPABASE_KEY) {
-    return res.status(500).json({ success: false, message: 'Supabase not configured' });
-  }
-
-  var action = req.query.action || (req.body && req.body.action) || '';
-
-  // ===== GENERATE AE ID HELPER =====
-  async function generateAeId() {
-    try {
-      var maxRows = await supaGet(SUPABASE_URL, SUPABASE_KEY,
-        '/rest/v1/crm_contacts?select=ae_id&ae_id=not.is.null&order=ae_id.desc&limit=1');
-      if (maxRows && maxRows.length > 0 && maxRows[0].ae_id) {
-        var lastNum = parseInt(maxRows[0].ae_id.replace('AE-', ''), 10);
-        if (!isNaN(lastNum)) return 'AE-' + (lastNum + 1);
+function loadCrm() {
+  fetch('https://agent-edge-backend.vercel.app/api/crm-api?action=list', {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json' }
+  })
+    .then(function(response) { return response.json(); })
+    .then(function(data) {
+      if (data.success && data.contacts) {
+        crmContacts = data.contacts;
+        crmLoaded = true;
+        crmRenderList();
+        document.getElementById('navCrmCount').textContent = crmContacts.length;
+        var dce=document.getElementById('dashCrm');if(dce)dce.textContent=crmContacts.length;
+        document.getElementById('crmSubtitle').textContent = crmContacts.length + ' contacts';
       }
-      // Also check users table in case signup created higher IDs
-      var maxUserRows = await supaGet(SUPABASE_URL, SUPABASE_KEY,
-        '/rest/v1/users?select=ae_id&ae_id=not.is.null&order=ae_id.desc&limit=1');
-      if (maxUserRows && maxUserRows.length > 0 && maxUserRows[0].ae_id) {
-        var lastUserNum = parseInt(maxUserRows[0].ae_id.replace('AE-', ''), 10);
-        if (!isNaN(lastUserNum)) return 'AE-' + (lastUserNum + 1);
-      }
-    } catch (e) {
-      console.error('AE ID gen error:', e);
-    }
-    return 'AE-' + (10000 + Date.now() % 10000);
-  }
+    })
+    .catch(function(err) { console.error('CRM load error:', err); });
+}
 
-  // ===== FIND EXISTING CONTACT (dedup helper) =====
-  // Priority: email > phone > license_number > name+company
-  async function findExistingContact(c) {
-    try {
-      // 1. Email match (most reliable)
-      if (c.email) {
-        var byEmail = await supaGet(SUPABASE_URL, SUPABASE_KEY,
-          '/rest/v1/crm_contacts?email=ilike.' + encodeURIComponent(c.email.trim()) + '&limit=1');
-        if (byEmail && byEmail.length > 0) return byEmail[0];
-      }
-      // 2. Phone match (strip non-digits, match last 10)
-      if (c.phone) {
-        var cleanPhone = String(c.phone).replace(/\D/g, '');
-        if (cleanPhone.length >= 10) {
-          var last10 = cleanPhone.slice(-10);
-          var byPhone = await supaGet(SUPABASE_URL, SUPABASE_KEY,
-            '/rest/v1/crm_contacts?phone=ilike.*' + last10 + '&limit=1');
-          if (byPhone && byPhone.length > 0) return byPhone[0];
-        }
-      }
-      // 3. License / MLS number match
-      var licNum = c.license_number || (c.data && c.data.license_number) || null;
-      if (licNum) {
-        var byLic = await supaGet(SUPABASE_URL, SUPABASE_KEY,
-          '/rest/v1/crm_contacts?data->>license_number=eq.' + encodeURIComponent(licNum.trim()) + '&limit=1');
-        if (byLic && byLic.length > 0) return byLic[0];
-      }
-      // 4. Name + Company match (fuzzy — case insensitive)
-      if (c.name && c.company) {
-        var byNameCo = await supaGet(SUPABASE_URL, SUPABASE_KEY,
-          '/rest/v1/crm_contacts?name=ilike.' + encodeURIComponent(c.name.trim()) +
-          '&company=ilike.*' + encodeURIComponent(c.company.trim().replace(/[^a-zA-Z0-9 ]/g, '*')) + '*&limit=1');
-        if (byNameCo && byNameCo.length > 0) return byNameCo[0];
-      }
-    } catch (e) {
-      console.error('findExistingContact error:', e);
-    }
-    return null;
-  }
-
-  // ===== GET: LIST / SEARCH / SINGLE =====
-  if (req.method === 'GET') {
-
-    // Single contact by ID
-    if (action === 'get' && req.query.id) {
-      try {
-        var contact = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + req.query.id);
-        if (!contact || contact.length === 0) {
-          return res.status(404).json({ success: false, message: 'Not found' });
-        }
-        var c = contact[0];
-        unpackData(c);
-        var activity = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_activity?crm_id=eq.' + req.query.id + '&order=date.desc&limit=50');
-        return res.status(200).json({ success: true, contact: c, activity: activity || [] });
-      } catch (err) {
-        return res.status(500).json({ success: false, message: err.toString() });
-      }
-    }
-
-    // List / search
-    try {
-      var url = '/rest/v1/crm_contacts?order=name.asc&limit=5000';
-
-      // Root type filter
-      if (req.query.root_type) {
-        url += '&root_type=ilike.' + req.query.root_type;
-      }
-      // Legacy type filter
-      if (req.query.type) {
-        url += '&type=ilike.' + req.query.type;
-      }
-
-      // Designation filter
-      if (req.query.designation) {
-        url += '&designations=cs.["' + req.query.designation + '"]';
-      }
-
-      // Source filter — ilike for flexibility
-      if (req.query.source) {
-        url += '&source=ilike.*' + req.query.source + '*';
-      }
-
-      // State filter — wildcard match so OH matches " OH", "OH ", etc
-      if (req.query.state) {
-        url += '&state=ilike.*' + req.query.state.toUpperCase().trim() + '*';
-      }
-
-      // Zip filter — wildcard so partial zips work too
-      if (req.query.zip) {
-        url += '&zip=ilike.*' + req.query.zip.trim() + '*';
-      }
-
-      // City filter — partial match
-      if (req.query.city) {
-        url += '&city=ilike.*' + req.query.city.trim() + '*';
-      }
-
-      // Company filter — strip special chars, replace with wildcards for fuzzy match
-      if (req.query.company) {
-        var comp = req.query.company.trim().replace(/[^a-zA-Z0-9 ]/g, '*').replace(/\s+/g, '*');
-        url += '&company=ilike.*' + comp + '*';
-      }
-
-      // Free text search — searches across multiple fields
-      if (req.query.q) {
-        var q = req.query.q.trim();
-        // Also strip special chars from q for company matching
-        var qClean = q.replace(/[^a-zA-Z0-9 ]/g, '*');
-        url += '&or=(name.ilike.*' + q + '*,email.ilike.*' + q + '*,phone.ilike.*' + q + '*,company.ilike.*' + qClean + '*,tags.ilike.*' + q + '*,ae_id.ilike.*' + q + '*,zip.ilike.*' + q + '*,city.ilike.*' + q + '*,state.ilike.*' + q + '*,address.ilike.*' + q + '*)';
-      }
-
-      var contacts = await supaGet(SUPABASE_URL, SUPABASE_KEY, url);
-      (contacts || []).forEach(function(c) { unpackData(c); });
-      return res.status(200).json({ success: true, contacts: contacts || [] });
-
-    } catch (err) {
-      console.error('CRM list error:', err);
-      return res.status(200).json({ success: true, contacts: [] });
-    }
-  }
-
-  // ===== POST ACTIONS =====
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
-  try {
-
-    // --- SAVE (upsert with dedup) ---
-    if (action === 'save') {
-      var c = req.body.crm;
-      if (!c || !c.name) {
-        return res.status(400).json({ success: false, message: 'Name is required' });
-      }
-
-      // Pack rich/nested data into the JSONB 'data' column
-      var richData = {};
-      if (c.employers) richData.employers = c.employers;
-      if (c.education) richData.education = c.education;
-      if (c.assets) richData.assets = c.assets;
-      if (c.reos) richData.reos = c.reos;
-      if (c.documents) richData.documents = c.documents;
-      if (c.co_borrowers) richData.co_borrowers = c.co_borrowers;
-      if (c.shared_loan) richData.shared_loan = c.shared_loan;
-      var personalFields = [
-        'first_name','middle_initial','last_name',
-        'own_rent','own_or_rent','monthly_payment','retain_sell','retain_or_sell',
-        'prev_address','prev_city','prev_state','prev_zip',
-        'marital_status','dependents','years_school',
-        'linked_to','relationship','license_number'
-      ];
-      personalFields.forEach(function(f) {
-        if (c[f] !== undefined && c[f] !== null) richData[f] = c[f];
-      });
-
-      // --- DEDUP: find existing contact by id, email, phone, license, or name+company ---
-      var matched = null;
-      var matchMethod = null;
-
-      // First check by explicit id if provided
-      if (c.id) {
-        var byId = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + c.id);
-        if (byId && byId.length > 0) { matched = byId[0]; matchMethod = 'id'; }
-      }
-
-      // If no id match, run dedup search
-      if (!matched) {
-        matched = await findExistingContact(c);
-        if (matched) matchMethod = 'dedup';
-      }
-
-      if (matched) {
-        // --- UPDATE existing contact ---
-        // Use the matched record's id, never generate a new one
-        var updateId = matched.id;
-
-        // Build update row — only overwrite fields that have real data
-        // Don't blow away existing data with empty strings from a spreadsheet
-        var updateRow = { updated_at: new Date().toISOString() };
-        var updateFields = [
-          'name','email','phone','type','root_type','designations','custom_type',
-          'company','address','city','state','zip','source','tags','notes',
-          'pipeline_id','birthday','spouse_name','kids','employer','job_title',
-          'website','facebook','instagram','linkedin','tiktok','realtor_name'
-        ];
-        updateFields.forEach(function(f) {
-          var newVal = c[f] !== undefined ? c[f] : null;
-          // For string fields: only overwrite if new value is non-empty
-          if (typeof newVal === 'string') {
-            if (newVal.trim() !== '') updateRow[f] = newVal;
-          } else if (Array.isArray(newVal)) {
-            if (newVal.length > 0) updateRow[f] = newVal;
-          } else if (newVal !== null && newVal !== undefined) {
-            updateRow[f] = newVal;
-          }
-        });
-
-        // Merge rich data — don't wipe existing
-        if (Object.keys(richData).length > 0) {
-          var existingData = matched.data || {};
-          Object.keys(richData).forEach(function(k) { existingData[k] = richData[k]; });
-          updateRow.data = existingData;
-        }
-
-        // Preserve root_type if not explicitly provided
-        if (!c.root_type && matched.root_type) {
-          delete updateRow.root_type;
-        }
-
-        // Never overwrite ae_id
-        delete updateRow.ae_id;
-
-        await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + updateId, 'PATCH', updateRow);
-        return res.status(200).json({ success: true, id: updateId, ae_id: matched.ae_id || null, status: 'updated' });
-
+function crmRenderList() {
+  var search = document.getElementById('crmSearch').value.toLowerCase();
+  var typeFilter = document.getElementById('crmTypeFilter').value;
+  var filtered = crmContacts.filter(function(c) {
+    var matchSearch = !search ||
+      (c.name || '').toLowerCase().includes(search) ||
+      (c.email || '').toLowerCase().includes(search) ||
+      (c.phone || '').includes(search) ||
+      (c.company || '').toLowerCase().includes(search) ||
+      (c.tags || '').toLowerCase().includes(search) ||
+      (c.ae_id || '').toLowerCase().includes(search);
+    var matchType = true;
+    if (typeFilter) {
+      if (typeFilter.indexOf('root:') === 0) {
+        var rootVal = typeFilter.replace('root:', '');
+        matchType = (c.root_type || c.type) === rootVal;
+      } else if (typeFilter.indexOf('desig:') === 0) {
+        var desigVal = typeFilter.replace('desig:', '');
+        var desigs = c.designations || [];
+        matchType = desigs.indexOf(desigVal) !== -1;
+        // Legacy fallback
+        if (!matchType && c.type === desigVal) matchType = true;
       } else {
-        // --- INSERT new contact ---
-        var newId = c.id || ('crm-' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4));
-        var newAeId = c.ae_id || await generateAeId();
-
-        var insertRow = {
-          id: newId,
-          ae_id: newAeId,
-          name: c.name,
-          email: c.email || null,
-          phone: c.phone || null,
-          type: c.type || c.root_type || 'other',
-          root_type: c.root_type || c.type || 'client',
-          designations: c.designations || [],
-          custom_type: c.custom_type || c.customType || null,
-          company: c.company || null,
-          address: c.address || null,
-          city: c.city || null,
-          state: c.state || null,
-          zip: c.zip || null,
-          source: c.source || null,
-          tags: c.tags || null,
-          notes: c.notes || null,
-          pipeline_id: c.pipeline_id || c.pipelineId || null,
-          birthday: c.birthday || null,
-          spouse_name: c.spouse_name || c.spouseName || null,
-          kids: c.kids || null,
-          employer: c.employer || null,
-          job_title: c.job_title || c.jobTitle || null,
-          website: c.website || null,
-          facebook: c.facebook || null,
-          instagram: c.instagram || null,
-          linkedin: c.linkedin || null,
-          tiktok: c.tiktok || null,
-          realtor_name: c.realtor_name || c.realtorName || null,
-          data: Object.keys(richData).length > 0 ? richData : null,
-          created_at: c.createdAt || new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        };
-
-        await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts', 'POST', insertRow);
-        return res.status(200).json({ success: true, id: newId, ae_id: newAeId, status: 'created' });
+        matchType = (c.root_type || c.type) === typeFilter || c.type === typeFilter;
       }
-
-    // --- DELETE ---
-    } else if (action === 'delete') {
-      var crmId = req.body.crmId;
-      if (!crmId) return res.status(400).json({ success: false, message: 'Missing crmId' });
-      await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + crmId, 'DELETE');
-      return res.status(200).json({ success: true });
-
-    // --- ADD ACTIVITY ---
-    } else if (action === 'addActivity') {
-      var a = req.body.activity;
-      if (!a || !a.crm_id) return res.status(400).json({ success: false, message: 'Missing activity data' });
-      await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_activity', 'POST', {
-        crm_id: a.crm_id,
-        type: a.type || 'note',
-        subject: a.subject || null,
-        body: a.body || null,
-        date: a.date || new Date().toISOString()
-      });
-      return res.status(200).json({ success: true });
-
-    // --- PIPELINE LINK ---
-    } else if (action === 'pipelineLink') {
-      var p = req.body;
-      if (!p.pipelineId || !p.name) {
-        return res.status(400).json({ success: false, message: 'Missing pipelineId or name' });
-      }
-
-      // Check if already linked
-      var byPipeline = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?pipeline_id=eq.' + p.pipelineId);
-      if (byPipeline && byPipeline.length > 0) {
-        return res.status(200).json({ success: true, crmId: byPipeline[0].id, ae_id: byPipeline[0].ae_id, message: 'Already linked' });
-      }
-
-      // Check by name + email match
-      if (p.email) {
-        var byEmail = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?name=ilike.' + encodeURIComponent(p.name) + '&email=ilike.' + encodeURIComponent(p.email));
-        if (byEmail && byEmail.length > 0) {
-          // Add borrower designation if not already there
-          var existingDesignations = byEmail[0].designations || [];
-          if (existingDesignations.indexOf('borrower') === -1) {
-            existingDesignations.push('borrower');
-          }
-          await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + byEmail[0].id, 'PATCH', {
-            pipeline_id: p.pipelineId,
-            designations: existingDesignations,
-            updated_at: new Date().toISOString()
-          });
-          return res.status(200).json({ success: true, crmId: byEmail[0].id, ae_id: byEmail[0].ae_id, message: 'Linked existing' });
-        }
-      }
-
-      // Create new CRM entry with AE ID
-      var newAeId = await generateAeId();
-      var newId = 'crm-' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
-      await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts', 'POST', {
-        id: newId,
-        ae_id: newAeId,
-        name: p.name,
-        email: p.email || null,
-        phone: p.phone || null,
-        type: 'client',
-        root_type: 'client',
-        designations: ['borrower'],
-        source: 'pipeline',
-        pipeline_id: p.pipelineId,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      });
-
-      return res.status(200).json({ success: true, crmId: newId, ae_id: newAeId, message: 'Created new' });
-
-    // --- ADD DESIGNATION ---
-    } else if (action === 'addDesignation') {
-      var adId = req.body.crm_id;
-      var designation = req.body.designation;
-      if (!adId || !designation) return res.status(400).json({ success: false, message: 'Missing crm_id or designation' });
-
-      var adContact = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + adId + '&select=id,designations');
-      if (!adContact || adContact.length === 0) return res.status(404).json({ success: false, message: 'Contact not found' });
-
-      var desigs = adContact[0].designations || [];
-      if (desigs.indexOf(designation) === -1) {
-        desigs.push(designation);
-        await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + adId, 'PATCH', {
-          designations: desigs, updated_at: new Date().toISOString()
-        });
-      }
-      return res.status(200).json({ success: true, designations: desigs });
-
-    // --- REMOVE DESIGNATION ---
-    } else if (action === 'removeDesignation') {
-      var rdId = req.body.crm_id;
-      var rdDesig = req.body.designation;
-      if (!rdId || !rdDesig) return res.status(400).json({ success: false, message: 'Missing crm_id or designation' });
-
-      var rdContact = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + rdId + '&select=id,designations');
-      if (!rdContact || rdContact.length === 0) return res.status(404).json({ success: false, message: 'Contact not found' });
-
-      var rdDesigs = rdContact[0].designations || [];
-      rdDesigs = rdDesigs.filter(function(d) { return d !== rdDesig; });
-      await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + rdId, 'PATCH', {
-        designations: rdDesigs, updated_at: new Date().toISOString()
-      });
-      return res.status(200).json({ success: true, designations: rdDesigs });
-
-    // --- SEND EMAIL + LOG ---
-    } else if (action === 'sendEmail') {
-      var e = req.body;
-      if (!e.to || !e.subject || !e.body) {
-        return res.status(400).json({ success: false, message: 'Missing to, subject, or body' });
-      }
-      var resendKey = process.env.RESEND_API_KEY;
-      if (!resendKey) return res.status(500).json({ success: false, message: 'Resend not configured' });
-
-      var sendResp = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + resendKey, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          from: 'Kristy Flach <kflach@kristyflach.com>',
-          reply_to: 'KFlach@prmg.net',
-          to: Array.isArray(e.to) ? e.to : [e.to],
-          subject: e.subject,
-          html: e.body
-        })
-      });
-      var sendData = await sendResp.json();
-      if (!sendResp.ok) {
-        return res.status(500).json({ success: false, message: sendData.message || 'Send failed' });
-      }
-      if (e.crm_id) {
-        await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_activity', 'POST', {
-          crm_id: e.crm_id, type: 'email_sent', subject: e.subject,
-          body: e.bodyPreview || e.subject, date: new Date().toISOString()
-        });
-      }
-      return res.status(200).json({ success: true, emailId: sendData.id });
-
-    // --- CLEAR LINK ---
-    } else if (action === 'clearLink') {
-      var clearId = req.body.crm_id;
-      if (!clearId) return res.status(400).json({ success: false, message: 'Missing crm_id' });
-      var clearContact = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + clearId + '&select=id,data');
-      if (clearContact && clearContact.length > 0) {
-        var cData = clearContact[0].data || {};
-        delete cData.linked_to;
-        delete cData.relationship;
-        await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + clearId, 'PATCH', {
-          data: cData, updated_at: new Date().toISOString()
-        });
-      }
-      return res.status(200).json({ success: true, message: 'Link cleared' });
-
-    // --- GET LINKED CONTACTS ---
-    } else if (action === 'getLinkedContacts') {
-      var linkId = req.body.crm_id;
-      if (!linkId) return res.status(400).json({ success: false, message: 'Missing crm_id' });
-
-      var results = [];
-      var thisContact = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + linkId + '&select=id,name,data');
-      if (thisContact && thisContact.length > 0) {
-        var myData = thisContact[0].data;
-        if (myData && myData.linked_to) {
-          var linkedTo = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + myData.linked_to + '&select=id,name,type,root_type,phone,email,ae_id');
-          if (linkedTo && linkedTo.length > 0) {
-            results.push({
-              direction: 'linked_to', contact_id: linkedTo[0].id,
-              contact_name: linkedTo[0].name, contact_type: linkedTo[0].root_type || linkedTo[0].type,
-              ae_id: linkedTo[0].ae_id || '', relationship: myData.relationship || ''
-            });
-          }
-        }
-      }
-
-      var coBorrowerOf = await supaGet(SUPABASE_URL, SUPABASE_KEY,
-        '/rest/v1/crm_contacts?select=id,name,type,root_type,phone,email,ae_id&data->>linked_to=eq.' + linkId);
-      var coBorrowerOf2 = await supaGet(SUPABASE_URL, SUPABASE_KEY,
-        '/rest/v1/crm_contacts?select=id,name,type,root_type,data,ae_id&data->co_borrowers=cs.[{"contact_id":"' + linkId + '"}]');
-
-      var seen = {};
-      (coBorrowerOf || []).forEach(function(c) {
-        if (c.id !== linkId && !seen[c.id]) {
-          seen[c.id] = true;
-          results.push({ direction: 'linked_from', contact_id: c.id,
-            contact_name: c.name, contact_type: c.root_type || c.type,
-            ae_id: c.ae_id || '', relationship: '' });
-        }
-      });
-      (coBorrowerOf2 || []).forEach(function(c) {
-        if (c.id !== linkId && !seen[c.id]) {
-          seen[c.id] = true;
-          var rel = '';
-          if (c.data && c.data.co_borrowers) {
-            var match = c.data.co_borrowers.find(function(cb) { return cb.contact_id === linkId; });
-            if (match) rel = match.relationship || '';
-          }
-          results.push({ direction: 'co_borrower_on', contact_id: c.id,
-            contact_name: c.name, contact_type: c.root_type || c.type,
-            ae_id: c.ae_id || '', relationship: rel });
-        }
-      });
-
-      return res.status(200).json({ success: true, links: results });
-
-    // --- CREATE LINKED CONTACT (spouse/co-borrower with auto-populate) ---
-    } else if (action === 'createLinkedContact') {
-      var lc = req.body;
-      if (!lc.source_crm_id || !lc.name) {
-        return res.status(400).json({ success: false, message: 'Missing source_crm_id or name' });
-      }
-
-      // Fetch source contact for auto-populate
-      var sourceContact = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + lc.source_crm_id);
-      var src = (sourceContact && sourceContact.length > 0) ? sourceContact[0] : {};
-
-      var newId = 'crm-' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
-      var newAeId = await generateAeId();
-      var newRootType = lc.root_type || 'client';
-
-      // Auto-populate shared fields from source
-      var newContact = {
-        id: newId,
-        ae_id: newAeId,
-        name: lc.name,
-        email: lc.email || null,
-        phone: lc.phone || null,
-        type: newRootType,
-        root_type: newRootType,
-        designations: lc.designations || [],
-        company: src.company || null,
-        address: src.address || null,
-        city: src.city || null,
-        state: src.state || null,
-        zip: src.zip || null,
-        source: 'linked_contact',
-        data: { linked_to: lc.source_crm_id, relationship: lc.relationship || 'spouse' },
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      };
-
-      await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts', 'POST', newContact);
-
-      return res.status(200).json({ success: true, id: newId, ae_id: newAeId });
-
-    } else if (action === 'listGroups') {
-      var groups = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/ae_audience_groups?order=created_at.desc');
-      return res.status(200).json({ success: true, groups: groups || [] });
-
-    } else if (action === 'saveGroup') {
-      var grp = req.body.group;
-      if (!grp || !grp.name) return res.status(400).json({ success: false, message: 'Group name required' });
-      var groupId = 'grp_' + Date.now();
-      var now = new Date().toISOString();
-      await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/ae_audience_groups', 'POST', {
-        id: groupId,
-        name: grp.name,
-        filters: grp.filters || {},
-        contact_count: grp.contact_count || 0,
-        created_at: now,
-        updated_at: now
-      });
-      return res.status(200).json({ success: true, id: groupId });
-
-    } else if (action === 'deleteGroup') {
-      var gid = req.body.groupId;
-      if (!gid) return res.status(400).json({ success: false, message: 'groupId required' });
-      await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/ae_audience_groups?id=eq.' + gid, 'DELETE');
-      return res.status(200).json({ success: true });
-
-    } else {
-      return res.status(400).json({ error: 'Unknown action: ' + action });
     }
-
-  } catch (error) {
-    console.error('CRM API error:', error);
-    return res.status(500).json({ success: false, message: error.toString() });
-  }
-}
-
-// ===== UNPACK JSONB DATA =====
-function unpackData(c) {
-  if (c.data && typeof c.data === 'object') {
-    var richData = c.data;
-    Object.keys(richData).forEach(function(k) {
-      if (c[k] === undefined || c[k] === null) c[k] = richData[k];
-    });
-    if (richData.employers) c.employers = richData.employers;
-    if (richData.education) c.education = richData.education;
-    if (richData.assets) c.assets = richData.assets;
-    if (richData.reos) c.reos = richData.reos;
-    if (richData.documents) c.documents = richData.documents;
-    if (richData.co_borrowers) c.co_borrowers = richData.co_borrowers;
-    if (richData.shared_loan) c.shared_loan = richData.shared_loan;
-  }
-  // Ensure designations is always an array
-  if (!c.designations) c.designations = [];
-  // Ensure root_type falls back to type
-  if (!c.root_type && c.type) c.root_type = c.type;
-}
-
-// ===== SUPABASE HELPERS =====
-async function supaGet(url, key, path) {
-  var resp = await fetch(url + path, {
-    headers: { 'apikey': key, 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' }
+    return matchSearch && matchType;
   });
-  return await resp.json();
+
+  document.getElementById('crmTotalCount').textContent = filtered.length;
+  var html = '';
+  var badgeColors = { client: 'rgba(59,130,246,0.12);color:#3b82f6', realtor: 'rgba(34,197,94,0.12);color:#22c55e', title: 'rgba(245,158,11,0.12);color:#f59e0b', appraiser: 'rgba(168,85,247,0.12);color:#a855f7', contractor: 'rgba(239,68,68,0.12);color:#ef4444', vendor: 'rgba(20,184,166,0.12);color:#14b8a6', other: 'rgba(0,0,0,0.04);color:var(--text-muted)' };
+  var badgeLabels = { client:'Client', realtor:'Realtor', title:'Title', appraiser:'Appraiser', contractor:'Contractor', vendor:'Vendor', other:'Other' };
+  var desigBadgeColors = { borrower: 'rgba(14,165,233,0.12);color:#0ea5e9', past_client: 'rgba(34,197,94,0.12);color:#22c55e' };
+  var desigBadgeLabels = { borrower:'Borrower', past_client:'Past Client' };
+
+  filtered.forEach(function(c) {
+    var activeClass = c.id === crmCurrentId ? ' active' : '';
+    var rootType = c.root_type || c.type || 'other';
+    var typeClass = ' t-' + rootType;
+    var badgeStyle = badgeColors[rootType] || badgeColors.other;
+    var badgeLabel = badgeLabels[rootType] || rootType || 'Other';
+
+    // Build designation mini-badges
+    var desigHtml = '';
+    (c.designations || []).forEach(function(d) {
+      if (desigBadgeLabels[d]) {
+        desigHtml += '<span class="ci-desig" style="background:' + desigBadgeColors[d] + '">' + desigBadgeLabels[d] + '</span>';
+      }
+    });
+
+    html += '<div class="crm-contact-item' + typeClass + activeClass + '" onclick="crmSelectContact(\'' + c.id + '\')">' +
+      '<div><div class="ci-name">' + (c.name || 'Unnamed') + '</div><div class="ci-sub">' + (c.email || (typeof formatPhoneDisplay==='function'?formatPhoneDisplay(c.phone):c.phone) || '') + '</div></div>' +
+      '<div style="text-align:right;"><div class="ci-badge" style="background:' + badgeStyle + '">' + badgeLabel + '</div>' + desigHtml + '</div></div>';
+  });
+  document.getElementById('crmContactList').innerHTML = html;
 }
 
-async function supaFetch(url, key, path, method, body) {
-  var headers = { 'apikey': key, 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' };
-  var opts = { method: method, headers: headers };
-  if (body && (method === 'POST' || method === 'PATCH')) { opts.body = JSON.stringify(body); }
-  var resp = await fetch(url + path, opts);
-  if (!resp.ok) {
-    var errText = await resp.text();
-    throw new Error(method + ' failed: ' + resp.status + ' ' + errText);
+function crmConfirmDelete() {
+  if (!crmCurrentId) return;
+  if (!crmDeleteArmed) {
+    crmDeleteArmed = true;
+    document.getElementById('crmDeleteBtn').textContent = 'Confirm Delete';
+    document.getElementById('crmDeleteBtn').style.background = 'rgba(239,68,68,0.15)';
+    document.getElementById('crmDeleteBtn').style.color = '#ef4444';
+    setTimeout(function() {
+      crmDeleteArmed = false;
+      document.getElementById('crmDeleteBtn').textContent = 'Delete';
+      document.getElementById('crmDeleteBtn').style.background = '';
+      document.getElementById('crmDeleteBtn').style.color = '';
+    }, 4000);
+    return;
   }
-  return resp;
+  fetch(CRM_API + '/crm-api?action=delete', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ crmId: crmCurrentId })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function() {
+    crmContacts = crmContacts.filter(function(c) { return c.id !== crmCurrentId; });
+    crmCurrentId = null;
+    document.getElementById('crmDetailContent').style.display = 'none';
+    document.getElementById('crmDetailEmpty').style.display = 'flex';
+    // Show New Contact button again
+    var newBtn = document.getElementById('crmNewContactBtn');
+    if (newBtn) newBtn.style.display = '';
+    crmRenderList();
+    showToast('Contact deleted');
+    document.getElementById('navCrmCount').textContent = crmContacts.length;
+    var dce=document.getElementById('dashCrm');if(dce)dce.textContent=crmContacts.length;
+    document.getElementById('crmSubtitle').textContent = crmContacts.length + ' contacts';
+  })
+  .catch(function() { showToast('Delete failed'); });
+}
+function crmAddActivity() {
+  if (!crmCurrentId) return;
+  var type = document.getElementById('crmActivityType').value;
+  var text = document.getElementById('crmActivityText').value.trim();
+  if (!text) return;
+
+  fetch(CRM_API + '/crm-api', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'addActivity', activity: { crm_id: crmCurrentId, type: type, subject: text, body: text } })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function() {
+    document.getElementById('crmActivityText').value = '';
+    crmSelectContact(crmCurrentId);
+    showToast('Activity added');
+  });
+}
+
+function crmOpenEmailModal() {
+  if (!crmCurrentId) return;
+  var c = crmContacts.find(function(x) { return x.id === crmCurrentId; });
+  if (!c || !c.email) { showToast('No email address'); return; }
+  document.getElementById('emailTo').value = c.email;
+  document.getElementById('emailSubject').value = '';
+  document.getElementById('emailBody').value = '';
+  document.getElementById('emailModal').classList.add('show');
+}
+
+function handleCrmImport(input) {
+  var file = input.files[0];
+  if (!file) return;
+  var statusEl = document.getElementById('importStatus');
+  if (statusEl) { statusEl.style.display = 'block'; statusEl.innerHTML = '<div style="color:#0ea5e9;font-size:13px;"><i class="fas fa-spinner fa-spin"></i> Reading file...</div>'; }
+
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      var wb = XLSX.read(e.target.result, { type: 'array' });
+      var ws = wb.Sheets[wb.SheetNames[0]];
+      var rows = XLSX.utils.sheet_to_json(ws);
+      var total = rows.length;
+      var created = 0;
+      var updated = 0;
+      var skipped = 0;
+      var processed = 0;
+      var contacts = [];
+
+      rows.forEach(function(row) {
+        var firstName = String(row['First Name'] || row['first_name'] || '').trim();
+        var mi = String(row['MI'] || row['Middle Initial'] || row['middle_initial'] || '').trim();
+        var lastName = String(row['Last Name'] || row['last_name'] || '').trim();
+        var fullName = String(row['Name'] || row['Full Name'] || row['name'] || '').trim();
+        if (firstName || lastName) {
+          var nameParts = [firstName];
+          if (mi) nameParts.push(mi.toUpperCase() + '.');
+          nameParts.push(lastName);
+          fullName = nameParts.filter(Boolean).join(' ');
+        }
+        if (!fullName) { skipped++; return; }
+        var phone = String(row['Phone'] || row['Phone Number'] || row['phone'] || '').replace(/\D/g, '');
+        var type = String(row['Type'] || row['type'] || 'client').toLowerCase().trim();
+        if (type === 'agent' || type === 'real estate agent') type = 'realtor';
+        if (type === 'past client' || type === 'previous client') type = 'past_client';
+        contacts.push({
+          name: fullName, first_name: firstName || null, middle_initial: mi ? mi.toUpperCase() : null, last_name: lastName || null,
+          email: String(row['Email'] || row['email'] || '').trim(), phone: phone, type: type, root_type: type,
+          designations: type === 'realtor' ? ['realtor'] : [],
+          company: String(row['Company'] || row['Company / Brokerage'] || row['Brokerage'] || row['company'] || '').trim(),
+          source: String(row['Source'] || row['source'] || 'import').trim(),
+          address: String(row['Street'] || row['Address'] || row['street'] || row['address'] || '').trim(),
+          city: String(row['City'] || row['city'] || '').trim(), state: String(row['State'] || row['state'] || '').trim(),
+          zip: String(row['Zip'] || row['zip'] || row['ZIP'] || row['Zip Code'] || '').trim(),
+          job_title: String(row['Title'] || row['Job Title'] || row['job_title'] || '').trim(),
+          license_number: String(row['License Number'] || row['license_number'] || row['MLS'] || row['MLS #'] || '').trim(),
+          website: String(row['Website'] || row['website'] || '').trim(), facebook: String(row['Facebook'] || row['facebook'] || '').trim(),
+          instagram: String(row['Instagram'] || row['instagram'] || '').trim(), linkedin: String(row['LinkedIn'] || row['linkedin'] || '').trim(),
+          tiktok: String(row['TikTok'] || row['tiktok'] || '').trim(), tags: String(row['Tags'] || row['tags'] || '').trim() || null,
+          notes: String(row['Notes'] || row['notes'] || '').trim(), verified: false
+        });
+      });
+
+      function processBatch(idx) {
+        var batch = contacts.slice(idx, idx + 10);
+        if (batch.length === 0) {
+          var sumParts = [];
+          if (created > 0) sumParts.push(created + ' created');
+          if (updated > 0) sumParts.push(updated + ' updated');
+          if (skipped > 0) sumParts.push(skipped + ' skipped');
+          if (statusEl) {
+            statusEl.innerHTML = '<div style="color:#22c55e;font-size:13px;font-weight:600;"><i class="fas fa-check-circle"></i> ' + (created + updated) + ' of ' + total + ' contacts processed (' + sumParts.join(', ') + ')</div>';
+            setTimeout(function() { statusEl.style.display = 'none'; }, 8000);
+          }
+          showToast((created + updated) + ' contacts processed');
+          loadCrm();
+          return;
+        }
+        if (statusEl) { statusEl.innerHTML = '<div style="color:#0ea5e9;font-size:13px;"><i class="fas fa-spinner fa-spin"></i> Processing ' + processed + ' of ' + contacts.length + '...</div>'; }
+        Promise.all(batch.map(function(contact) {
+          return fetch(API_BASE + '/crm-api', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'save', crm: contact })
+          }).then(function(r) { return r.json(); }).then(function(d) {
+            processed++;
+            if (d && d.status === 'updated') updated++;
+            else if (d && d.status === 'created') created++;
+            else created++;
+          }).catch(function() { processed++; skipped++; });
+        })).then(function() { processBatch(idx + 10); });
+      }
+      processBatch(0);
+    } catch (err) {
+      if (statusEl) { statusEl.innerHTML = '<div style="color:#ef4444;font-size:13px;"><i class="fas fa-exclamation-circle"></i> Import failed: ' + err.message + '</div>'; }
+      showToast('Import failed: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+  input.value = '';
+}
+
+// ===== DELETE CONTACT (User Management) =====
+function searchDeleteContacts() {
+  var q = document.getElementById('deleteContactSearch').value.toLowerCase().trim();
+  var el = document.getElementById('deleteContactResults');
+  if (!el) return;
+  if (q.length < 2) { el.innerHTML = ''; return; }
+
+  var matches = (typeof crmContacts !== 'undefined' ? crmContacts : []).filter(function(c) {
+    return (c.name || '').toLowerCase().includes(q) ||
+      (c.email || '').toLowerCase().includes(q) ||
+      (c.phone || '').includes(q);
+  }).slice(0, 10);
+
+  if (matches.length === 0) { el.innerHTML = '<div style="padding:8px;font-size:12px;color:var(--text-muted);">No contacts found</div>'; return; }
+
+  var h = '';
+  matches.forEach(function(c) {
+    var typeColors = { client:'#3b82f6', borrower:'#0ea5e9', past_client:'#22c55e', realtor:'#22c55e', title:'#f59e0b', appraiser:'#a855f7', contractor:'#ef4444', vendor:'#14b8a6' };
+    var tColor = typeColors[c.type] || '#888';
+    h += '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1px solid var(--border);border-radius:8px;margin-bottom:4px;background:#fafbfc;">';
+    h += '<div><div style="font-size:13px;font-weight:600;color:#e2e8f0;">' + (c.name || 'Unnamed') + '</div>';
+    h += '<div style="font-size:11px;color:var(--text-muted);">' + (c.email || c.phone || '') + ' · <span style="color:' + tColor + ';">' + (c.type || 'other') + '</span></div></div>';
+    h += '<button class="card-action-btn danger" style="font-size:11px;padding:6px 12px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);color:#ef4444;" onclick="confirmDeleteContact(\'' + c.id + '\',\'' + (c.name || '').replace(/'/g, "\\'") + '\')"><i class="fas fa-trash"></i> Delete</button>';
+    h += '</div>';
+  });
+  el.innerHTML = h;
+}
+
+function confirmDeleteContact(id, name) {
+  if (!confirm('Permanently delete ' + name + '? This cannot be undone.')) return;
+  fetch(CRM_API + '/crm-api?action=delete', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ crmId: id })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function() {
+    crmContacts = crmContacts.filter(function(c) { return c.id !== id; });
+    // If this contact was open, close the card
+    if (crmCurrentId === id) {
+      crmCurrentId = null;
+      document.getElementById('crmDetailContent').style.display = 'none';
+      document.getElementById('crmDetailEmpty').style.display = 'flex';
+      var newBtn = document.getElementById('crmNewContactBtn');
+      if (newBtn) newBtn.style.display = '';
+    }
+    crmRenderList();
+    searchDeleteContacts(); // refresh search results
+    showToast(name + ' deleted');
+    document.getElementById('navCrmCount').textContent = crmContacts.length;
+    var dce=document.getElementById('dashCrm');if(dce)dce.textContent=crmContacts.length;
+    document.getElementById('crmSubtitle').textContent = crmContacts.length + ' contacts';
+  })
+  .catch(function() { showToast('Delete failed'); });
 }
