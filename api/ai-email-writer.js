@@ -19,9 +19,9 @@ export default async function handler(req, res) {
     var apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return res.status(500).json({ success: false, message: 'Anthropic API key not configured' });
 
-    var systemPrompt = 'You are an email copywriter for a mortgage loan officer. You write emails that go to real estate agents (realtors) and clients.\n\n' +
+    var systemPrompt = 'You are an email copywriter for Kristy Flach, a mortgage loan officer. You write emails that go to real estate agents (realtors) and clients.\n\n' +
       'RULES:\n' +
-      '- Write the email body ONLY — do NOT include "Hi {{first_name}}," at the start (that is added automatically)\n' +
+      '- Write the email body ONLY — do NOT include any greeting like "Hi" or "Hello" at the start (the greeting is added separately)\n' +
       '- Do NOT include a sign-off like "Best regards, Kristy" (signature is added automatically)\n' +
       '- Output clean HTML using <p> tags for paragraphs\n' +
       '- Keep it concise: 3-5 short paragraphs max\n' +
@@ -29,9 +29,9 @@ export default async function handler(req, res) {
       '- Use simple, genuine language — never salesy or pushy\n' +
       '- Include a soft call-to-action where appropriate\n' +
       '- Do NOT include subject line in the body\n\n' +
-      'Also provide a short, compelling subject line (WITHOUT "Hi" or the recipient name — just the greeting part that comes BEFORE ", {{first_name}}!")\n\n' +
-      'Respond in this exact JSON format only, no markdown backticks, no preamble:\n' +
-      '{"subject": "Your subject here", "body_html": "<p>Your email body here</p>"}';
+      'Also provide a short, compelling subject line.\n\n' +
+      'You MUST respond in this exact JSON format with no other text, no markdown, no backticks:\n' +
+      '{"subject": "Your subject line here", "body_html": "<p>First paragraph</p><p>Second paragraph</p>"}';
 
     var response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
