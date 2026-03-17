@@ -63,51 +63,54 @@ export default async function handler(req, res) {
 
     // List / search
     try {
-      var url = '/rest/v1/crm_contacts?order=name.asc&limit=500';
+      var url = '/rest/v1/crm_contacts?order=name.asc';
 
       // Root type filter
       if (req.query.root_type) {
-        url += '&root_type=eq.' + req.query.root_type;
+        url += '&root_type=ilike.' + req.query.root_type;
       }
-      // Legacy type filter (still works for backward compat)
+      // Legacy type filter
       if (req.query.type) {
-        url += '&type=eq.' + req.query.type;
+        url += '&type=ilike.' + req.query.type;
       }
 
-      // Designation filter — uses JSONB containment
+      // Designation filter
       if (req.query.designation) {
         url += '&designations=cs.["' + req.query.designation + '"]';
       }
 
-      // Source filter
+      // Source filter — ilike for flexibility
       if (req.query.source) {
-        url += '&source=eq.' + req.query.source;
+        url += '&source=ilike.*' + req.query.source + '*';
       }
 
-      // State filter — exact match on 2-letter code
+      // State filter — wildcard match so OH matches " OH", "OH ", etc
       if (req.query.state) {
-        url += '&state=ilike.' + req.query.state.toUpperCase();
+        url += '&state=ilike.*' + req.query.state.toUpperCase().trim() + '*';
       }
 
-      // Zip filter — exact match
+      // Zip filter — wildcard so partial zips work too
       if (req.query.zip) {
-        url += '&zip=eq.' + req.query.zip;
+        url += '&zip=ilike.*' + req.query.zip.trim() + '*';
       }
 
       // City filter — partial match
       if (req.query.city) {
-        url += '&city=ilike.*' + req.query.city + '*';
+        url += '&city=ilike.*' + req.query.city.trim() + '*';
       }
 
-      // Company filter — partial match, case insensitive
+      // Company filter — strip special chars, replace with wildcards for fuzzy match
       if (req.query.company) {
-        url += '&company=ilike.*' + req.query.company + '*';
+        var comp = req.query.company.trim().replace(/[^a-zA-Z0-9 ]/g, '*').replace(/\s+/g, '*');
+        url += '&company=ilike.*' + comp + '*';
       }
 
       // Free text search — searches across multiple fields
       if (req.query.q) {
-        var q = req.query.q;
-        url += '&or=(name.ilike.*' + q + '*,email.ilike.*' + q + '*,phone.ilike.*' + q + '*,company.ilike.*' + q + '*,tags.ilike.*' + q + '*,ae_id.ilike.*' + q + '*,zip.ilike.*' + q + '*,city.ilike.*' + q + '*,state.ilike.*' + q + '*,address.ilike.*' + q + '*)';
+        var q = req.query.q.trim();
+        // Also strip special chars from q for company matching
+        var qClean = q.replace(/[^a-zA-Z0-9 ]/g, '*');
+        url += '&or=(name.ilike.*' + q + '*,email.ilike.*' + q + '*,phone.ilike.*' + q + '*,company.ilike.*' + qClean + '*,tags.ilike.*' + q + '*,ae_id.ilike.*' + q + '*,zip.ilike.*' + q + '*,city.ilike.*' + q + '*,state.ilike.*' + q + '*,address.ilike.*' + q + '*)';
       }
 
       var contacts = await supaGet(SUPABASE_URL, SUPABASE_KEY, url);
