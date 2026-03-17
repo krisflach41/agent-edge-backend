@@ -93,13 +93,19 @@ export default async function handler(req, res) {
         url += '&state=ilike.' + req.query.state;
       }
       if (req.query.zip) {
-        url += '&zip=eq.' + req.query.zip;
+        var z = req.query.zip;
+        // Check zip column OR zip embedded in address
+        url += '&or=(zip=eq.' + z + ',address.ilike.*' + z + '*)';
       }
       if (req.query.city) {
-        url += '&city=ilike.*' + req.query.city + '*';
+        var ct = req.query.city;
+        // Check city column OR city embedded in address
+        url += '&or=(city.ilike.*' + ct + '*,address.ilike.*' + ct + '*)';
       }
       if (req.query.company) {
-        url += '&company=ilike.*' + req.query.company + '*';
+        // Strip special chars for fuzzy matching — search with wildcards between chars
+        var comp = req.query.company.replace(/[^a-zA-Z0-9 ]/g, '*');
+        url += '&company=ilike.*' + comp + '*';
       }
 
       var contacts = await supaGet(SUPABASE_URL, SUPABASE_KEY, url);
