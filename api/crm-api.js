@@ -42,6 +42,46 @@ export default async function handler(req, res) {
     return 'AE-' + (10000 + Date.now() % 10000);
   }
 
+  // ===== FIND EXISTING CONTACT (dedup helper) =====
+  // Priority: email > phone > license_number > name+company
+  async function findExistingContact(c) {
+    try {
+      // 1. Email match (most reliable)
+      if (c.email) {
+        var byEmail = await supaGet(SUPABASE_URL, SUPABASE_KEY,
+          '/rest/v1/crm_contacts?email=ilike.' + encodeURIComponent(c.email.trim()) + '&limit=1');
+        if (byEmail && byEmail.length > 0) return byEmail[0];
+      }
+      // 2. Phone match (strip non-digits, match last 10)
+      if (c.phone) {
+        var cleanPhone = String(c.phone).replace(/\D/g, '');
+        if (cleanPhone.length >= 10) {
+          var last10 = cleanPhone.slice(-10);
+          var byPhone = await supaGet(SUPABASE_URL, SUPABASE_KEY,
+            '/rest/v1/crm_contacts?phone=ilike.*' + last10 + '&limit=1');
+          if (byPhone && byPhone.length > 0) return byPhone[0];
+        }
+      }
+      // 3. License / MLS number match
+      var licNum = c.license_number || (c.data && c.data.license_number) || null;
+      if (licNum) {
+        var byLic = await supaGet(SUPABASE_URL, SUPABASE_KEY,
+          '/rest/v1/crm_contacts?data->>license_number=eq.' + encodeURIComponent(licNum.trim()) + '&limit=1');
+        if (byLic && byLic.length > 0) return byLic[0];
+      }
+      // 4. Name + Company match (fuzzy — case insensitive)
+      if (c.name && c.company) {
+        var byNameCo = await supaGet(SUPABASE_URL, SUPABASE_KEY,
+          '/rest/v1/crm_contacts?name=ilike.' + encodeURIComponent(c.name.trim()) +
+          '&company=ilike.*' + encodeURIComponent(c.company.trim().replace(/[^a-zA-Z0-9 ]/g, '*')) + '*&limit=1');
+        if (byNameCo && byNameCo.length > 0) return byNameCo[0];
+      }
+    } catch (e) {
+      console.error('findExistingContact error:', e);
+    }
+    return null;
+  }
+
   // ===== GET: LIST / SEARCH / SINGLE =====
   if (req.method === 'GET') {
 
@@ -130,16 +170,11 @@ export default async function handler(req, res) {
 
   try {
 
-    // --- SAVE (upsert) ---
+    // --- SAVE (upsert with dedup) ---
     if (action === 'save') {
       var c = req.body.crm;
       if (!c || !c.name) {
         return res.status(400).json({ success: false, message: 'Name is required' });
-      }
-
-      var isNew = !c.id;
-      if (!c.id) {
-        c.id = 'crm-' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
       }
 
       // Pack rich/nested data into the JSONB 'data' column
@@ -162,61 +197,109 @@ export default async function handler(req, res) {
         if (c[f] !== undefined && c[f] !== null) richData[f] = c[f];
       });
 
-      var row = {
-        id: c.id,
-        name: c.name,
-        email: c.email || null,
-        phone: c.phone || null,
-        type: c.type || c.root_type || 'other',
-        root_type: c.root_type || c.type || 'other',
-        designations: c.designations || [],
-        custom_type: c.custom_type || c.customType || null,
-        company: c.company || null,
-        address: c.address || null,
-        city: c.city || null,
-        state: c.state || null,
-        zip: c.zip || null,
-        source: c.source || null,
-        tags: c.tags || null,
-        notes: c.notes || null,
-        pipeline_id: c.pipeline_id || c.pipelineId || null,
-        birthday: c.birthday || null,
-        spouse_name: c.spouse_name || c.spouseName || null,
-        kids: c.kids || null,
-        employer: c.employer || null,
-        job_title: c.job_title || c.jobTitle || null,
-        website: c.website || null,
-        facebook: c.facebook || null,
-        instagram: c.instagram || null,
-        linkedin: c.linkedin || null,
-        tiktok: c.tiktok || null,
-        realtor_name: c.realtor_name || c.realtorName || null,
-        data: Object.keys(richData).length > 0 ? richData : null,
-        updated_at: new Date().toISOString()
-      };
+      // --- DEDUP: find existing contact by id, email, phone, license, or name+company ---
+      var matched = null;
+      var matchMethod = null;
 
-      // Check if exists
-      var existing = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + c.id);
-
-      if (existing && existing.length > 0) {
-        // Update — don't overwrite root_type if not provided
-        if (!c.root_type && existing[0].root_type) {
-          row.root_type = existing[0].root_type;
-        }
-        // Don't overwrite ae_id
-        delete row.ae_id;
-        await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + c.id, 'PATCH', row);
-      } else {
-        // Insert — generate AE ID for new contacts
-        row.ae_id = c.ae_id || await generateAeId();
-        row.created_at = c.createdAt || new Date().toISOString();
-        if (!row.root_type || row.root_type === 'other') {
-          row.root_type = c.root_type || c.type || 'client';
-        }
-        await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts', 'POST', row);
+      // First check by explicit id if provided
+      if (c.id) {
+        var byId = await supaGet(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + c.id);
+        if (byId && byId.length > 0) { matched = byId[0]; matchMethod = 'id'; }
       }
 
-      return res.status(200).json({ success: true, id: c.id, ae_id: row.ae_id || null });
+      // If no id match, run dedup search
+      if (!matched) {
+        matched = await findExistingContact(c);
+        if (matched) matchMethod = 'dedup';
+      }
+
+      if (matched) {
+        // --- UPDATE existing contact ---
+        // Use the matched record's id, never generate a new one
+        var updateId = matched.id;
+
+        // Build update row — only overwrite fields that have real data
+        // Don't blow away existing data with empty strings from a spreadsheet
+        var updateRow = { updated_at: new Date().toISOString() };
+        var updateFields = [
+          'name','email','phone','type','root_type','designations','custom_type',
+          'company','address','city','state','zip','source','tags','notes',
+          'pipeline_id','birthday','spouse_name','kids','employer','job_title',
+          'website','facebook','instagram','linkedin','tiktok','realtor_name'
+        ];
+        updateFields.forEach(function(f) {
+          var newVal = c[f] !== undefined ? c[f] : null;
+          // For string fields: only overwrite if new value is non-empty
+          if (typeof newVal === 'string') {
+            if (newVal.trim() !== '') updateRow[f] = newVal;
+          } else if (Array.isArray(newVal)) {
+            if (newVal.length > 0) updateRow[f] = newVal;
+          } else if (newVal !== null && newVal !== undefined) {
+            updateRow[f] = newVal;
+          }
+        });
+
+        // Merge rich data — don't wipe existing
+        if (Object.keys(richData).length > 0) {
+          var existingData = matched.data || {};
+          Object.keys(richData).forEach(function(k) { existingData[k] = richData[k]; });
+          updateRow.data = existingData;
+        }
+
+        // Preserve root_type if not explicitly provided
+        if (!c.root_type && matched.root_type) {
+          delete updateRow.root_type;
+        }
+
+        // Never overwrite ae_id
+        delete updateRow.ae_id;
+
+        await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts?id=eq.' + updateId, 'PATCH', updateRow);
+        return res.status(200).json({ success: true, id: updateId, ae_id: matched.ae_id || null, status: 'updated' });
+
+      } else {
+        // --- INSERT new contact ---
+        var newId = c.id || ('crm-' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4));
+        var newAeId = c.ae_id || await generateAeId();
+
+        var insertRow = {
+          id: newId,
+          ae_id: newAeId,
+          name: c.name,
+          email: c.email || null,
+          phone: c.phone || null,
+          type: c.type || c.root_type || 'other',
+          root_type: c.root_type || c.type || 'client',
+          designations: c.designations || [],
+          custom_type: c.custom_type || c.customType || null,
+          company: c.company || null,
+          address: c.address || null,
+          city: c.city || null,
+          state: c.state || null,
+          zip: c.zip || null,
+          source: c.source || null,
+          tags: c.tags || null,
+          notes: c.notes || null,
+          pipeline_id: c.pipeline_id || c.pipelineId || null,
+          birthday: c.birthday || null,
+          spouse_name: c.spouse_name || c.spouseName || null,
+          kids: c.kids || null,
+          employer: c.employer || null,
+          job_title: c.job_title || c.jobTitle || null,
+          website: c.website || null,
+          facebook: c.facebook || null,
+          instagram: c.instagram || null,
+          linkedin: c.linkedin || null,
+          tiktok: c.tiktok || null,
+          realtor_name: c.realtor_name || c.realtorName || null,
+          data: Object.keys(richData).length > 0 ? richData : null,
+          created_at: c.createdAt || new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+
+        await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/crm_contacts', 'POST', insertRow);
+        return res.status(200).json({ success: true, id: newId, ae_id: newAeId, status: 'created' });
+      }
 
     // --- DELETE ---
     } else if (action === 'delete') {
