@@ -63,7 +63,7 @@ export default async function handler(req, res) {
 
     // List / search
     try {
-      var url = '/rest/v1/crm_contacts?order=name.asc';
+      var url = '/rest/v1/crm_contacts?order=name.asc&limit=500';
 
       // Root type filter
       if (req.query.root_type) {
@@ -79,33 +79,35 @@ export default async function handler(req, res) {
         url += '&designations=cs.["' + req.query.designation + '"]';
       }
 
-      // Search
-      if (req.query.q) {
-        var q = req.query.q;
-        url += '&or=(name.ilike.*' + q + '*,email.ilike.*' + q + '*,phone.ilike.*' + q + '*,company.ilike.*' + q + '*,tags.ilike.*' + q + '*,ae_id.ilike.*' + q + '*)';
-      }
-
-      // Audience filters
+      // Source filter
       if (req.query.source) {
         url += '&source=eq.' + req.query.source;
       }
+
+      // State filter — exact match on 2-letter code
       if (req.query.state) {
-        url += '&state=ilike.' + req.query.state;
+        url += '&state=ilike.' + req.query.state.toUpperCase();
       }
+
+      // Zip filter — exact match
       if (req.query.zip) {
-        var z = req.query.zip;
-        // Check zip column OR zip embedded in address
-        url += '&or=(zip=eq.' + z + ',address.ilike.*' + z + '*)';
+        url += '&zip=eq.' + req.query.zip;
       }
+
+      // City filter — partial match
       if (req.query.city) {
-        var ct = req.query.city;
-        // Check city column OR city embedded in address
-        url += '&or=(city.ilike.*' + ct + '*,address.ilike.*' + ct + '*)';
+        url += '&city=ilike.*' + req.query.city + '*';
       }
+
+      // Company filter — partial match, case insensitive
       if (req.query.company) {
-        // Strip special chars for fuzzy matching — search with wildcards between chars
-        var comp = req.query.company.replace(/[^a-zA-Z0-9 ]/g, '*');
-        url += '&company=ilike.*' + comp + '*';
+        url += '&company=ilike.*' + req.query.company + '*';
+      }
+
+      // Free text search — searches across multiple fields
+      if (req.query.q) {
+        var q = req.query.q;
+        url += '&or=(name.ilike.*' + q + '*,email.ilike.*' + q + '*,phone.ilike.*' + q + '*,company.ilike.*' + q + '*,tags.ilike.*' + q + '*,ae_id.ilike.*' + q + '*,zip.ilike.*' + q + '*,city.ilike.*' + q + '*,state.ilike.*' + q + '*,address.ilike.*' + q + '*)';
       }
 
       var contacts = await supaGet(SUPABASE_URL, SUPABASE_KEY, url);
