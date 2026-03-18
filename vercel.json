@@ -71,6 +71,10 @@
     {
       "path": "/api/cron-birthday",
       "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/webinar-reminders?action=check_reminders",
+      "schedule": "*/5 * * * *"
     }
   ]
 }
