@@ -105,6 +105,11 @@ export default async function handler(req, res) {
         url += '&company=ilike.*' + comp + '*';
       }
 
+      // Tags filter — exact or partial match
+      if (req.query.tags) {
+        url += '&tags=ilike.*' + req.query.tags.trim() + '*';
+      }
+
       // Free text search — searches across multiple fields
       if (req.query.q) {
         var q = req.query.q.trim();
