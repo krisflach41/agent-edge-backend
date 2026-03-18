@@ -149,16 +149,20 @@ export default async function handler(req, res) {
 
       // Also create/update CRM contact
       try {
-        const { data: crmExisting } = await supabase
+        const { data: crmExisting, error: crmLookupErr } = await supabase
           .from('crm_contacts')
           .select('id')
           .ilike('email', r.email)
           .maybeSingle();
 
+        if (crmLookupErr) {
+          console.error('CRM lookup error:', JSON.stringify(crmLookupErr));
+        }
+
         if (!crmExisting) {
           var crmId = 'crm-' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
           var fullName = ((r.first_name || '') + ' ' + (r.last_name || '')).trim();
-          await supabase.from('crm_contacts').insert({
+          const { error: crmInsertErr } = await supabase.from('crm_contacts').insert({
             id: crmId,
             name: fullName,
             first_name: r.first_name || '',
@@ -173,8 +177,15 @@ export default async function handler(req, res) {
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
           });
+          if (crmInsertErr) {
+            console.error('CRM INSERT FAILED:', JSON.stringify(crmInsertErr));
+          } else {
+            console.log('CRM contact created:', crmId, fullName);
+          }
+        } else {
+          console.log('CRM contact already exists:', crmExisting.id);
         }
-      } catch (e) { console.error('CRM contact create error:', e); }
+      } catch (e) { console.error('CRM contact create error:', e.message || e); }
 
       return res.status(200).json({ success: true, registrant: reg });
     }
