@@ -88,6 +88,21 @@ export default async function handler(req, res) {
         }
       } catch (e) { console.error('STOP enrollment cancel error:', e); }
 
+      // Move webinar registrants to abandoned
+      try {
+        if (contacts && contacts.length > 0) {
+          for (var wi = 0; wi < contacts.length; wi++) {
+            if (contacts[wi].email) {
+              await supabase
+                .from('ae_webinar_registrants')
+                .update({ pipeline_stage: 'abandoned' })
+                .ilike('email', contacts[wi].email)
+                .eq('pipeline_stage', 'registered');
+            }
+          }
+        }
+      } catch (e) { console.error('STOP webinar abandon error:', e); }
+
       // Send confirmation to the person
       await fetch('https://api.telnyx.com/v2/messages', {
         method: 'POST',
