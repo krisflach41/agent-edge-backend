@@ -637,18 +637,33 @@ async function processDrips(res) {
         // Personalize
         smsText = personalize(smsText, enrollment.contact_name, enrollment.contact_email);
 
-        // Look up contact phone from CRM
+        // Look up contact phone and SMS opt-out status from CRM
         var contactPhone = enrollment.contact_phone || '';
+        var smsOptedOut = false;
         if (!contactPhone) {
           const { data: contact } = await supabase
             .from('crm_contacts')
-            .select('phone')
+            .select('phone, sms_unsubscribed')
             .ilike('email', enrollment.contact_email)
             .maybeSingle();
-          if (contact && contact.phone) contactPhone = contact.phone;
+          if (contact) {
+            if (contact.phone) contactPhone = contact.phone;
+            if (contact.sms_unsubscribed) smsOptedOut = true;
+          }
+        } else {
+          // Have phone but still check opt-out
+          const { data: contact } = await supabase
+            .from('crm_contacts')
+            .select('sms_unsubscribed')
+            .ilike('email', enrollment.contact_email)
+            .maybeSingle();
+          if (contact && contact.sms_unsubscribed) smsOptedOut = true;
         }
 
-        if (!contactPhone) {
+        if (smsOptedOut) {
+          // Contact opted out of SMS — skip this step but advance
+          result = { success: true, skipped: 'sms_unsubscribed' };
+        } else if (!contactPhone) {
           // No phone number — skip this step but advance
           result = { success: true, skipped: 'no_phone' };
         } else {
