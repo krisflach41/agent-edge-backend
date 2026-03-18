@@ -223,11 +223,28 @@ export default async function handler(req, res) {
       var { registrant_id, stage } = req.body;
       if (!registrant_id || !stage) return res.status(400).json({ success: false, message: 'registrant_id and stage required' });
 
+      const { data: regData } = await supabase
+        .from('ae_webinar_registrants')
+        .select('crm_id')
+        .eq('id', registrant_id)
+        .single();
+
       const { error } = await supabase
         .from('ae_webinar_registrants')
         .update({ pipeline_stage: stage })
         .eq('id', registrant_id);
       if (error) return res.status(500).json({ success: false, message: error.message });
+
+      // Update linked CRM card if exists
+      if (regData && regData.crm_id) {
+        try {
+          await supabase
+            .from('crm_contacts')
+            .update({ tags: 'webinar:' + stage, updated_at: new Date().toISOString() })
+            .eq('id', regData.crm_id);
+        } catch (e) { console.error('CRM stage sync error:', e); }
+      }
+
       return res.status(200).json({ success: true });
     }
 
@@ -296,8 +313,13 @@ export default async function handler(req, res) {
         .maybeSingle();
 
       if (existing) {
-        // Link existing CRM card
+        // Link existing CRM card and update source/tags
         await supabase.from('ae_webinar_registrants').update({ crm_id: existing.id }).eq('id', regId);
+        await supabase.from('crm_contacts').update({
+          source: 'webinar',
+          tags: 'webinar:' + (reg.pipeline_stage || 'registered'),
+          updated_at: new Date().toISOString()
+        }).eq('id', existing.id);
         return res.status(200).json({ success: true, crm_id: existing.id, already_existed: true });
       }
 
@@ -318,10 +340,11 @@ export default async function handler(req, res) {
         name: fullName,
         email: reg.email,
         phone: reg.phone || '',
-        source: 'webinar_register',
+        source: 'webinar',
+        tags: 'webinar:' + (reg.pipeline_stage || 'registered'),
         type: 'client',
         root_type: 'client',
-        data: { first_name: reg.first_name || '', last_name: reg.last_name || '', webinar_id: reg.webinar_id, webinar_title: webinarTitle, notes: notesText },
+        data: { first_name: reg.first_name || '', last_name: reg.last_name || '', webinar_id: reg.webinar_id, webinar_title: webinarTitle, webinar_stage: reg.pipeline_stage || 'registered', notes: notesText },
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       });
