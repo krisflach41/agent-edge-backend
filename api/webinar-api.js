@@ -301,15 +301,13 @@ export default async function handler(req, res) {
       const { error: insertErr } = await supabase.from('crm_contacts').insert({
         id: crmId,
         name: fullName,
-        first_name: reg.first_name || '',
-        last_name: reg.last_name || '',
         email: reg.email,
         phone: reg.phone || '',
         source: 'webinar_register',
         type: 'client',
         root_type: 'client',
         lo_user_id: loUser,
-        data: { webinar_id: reg.webinar_id, webinar_title: webinarTitle, notes: notesText },
+        data: { first_name: reg.first_name || '', last_name: reg.last_name || '', webinar_id: reg.webinar_id, webinar_title: webinarTitle, notes: notesText },
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       });
