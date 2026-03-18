@@ -367,6 +367,115 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true });
     }
 
+    // ===== MARK ATTENDED BY EMAIL =====
+    if (action === 'mark_attended_by_email') {
+      var { webinar_id, email } = req.body;
+      if (!webinar_id || !email) return res.status(400).json({ success: false, message: 'webinar_id and email required' });
+      const { error } = await supabase
+        .from('ae_webinar_registrants')
+        .update({ attended: true, attended_at: new Date().toISOString(), pipeline_stage: 'attended' })
+        .eq('webinar_id', webinar_id)
+        .ilike('email', email);
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true });
+    }
+
+    // ===== BOOK CONSULTATION =====
+    if (action === 'book_consultation') {
+      var b = req.body;
+      if (!b.booking_date || !b.booking_time || !b.email) {
+        return res.status(400).json({ success: false, message: 'Date, time, and email required' });
+      }
+
+      // Check if slot already booked
+      const { data: existingBooking } = await supabase
+        .from('ae_bookings')
+        .select('id')
+        .eq('booking_date', b.booking_date)
+        .eq('booking_time', b.booking_time)
+        .eq('status', 'confirmed')
+        .maybeSingle();
+
+      if (existingBooking) {
+        return res.status(400).json({ success: false, message: 'This time slot has already been booked. Please select a different time.' });
+      }
+
+      // Create booking
+      const { data: booking, error: bookErr } = await supabase
+        .from('ae_bookings')
+        .insert({
+          webinar_id: b.webinar_id || null,
+          first_name: b.first_name || '',
+          last_name: b.last_name || '',
+          email: b.email,
+          phone: b.phone || '',
+          booking_date: b.booking_date,
+          booking_time: b.booking_time,
+          status: 'confirmed',
+          created_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+
+      if (bookErr) return res.status(500).json({ success: false, message: bookErr.message });
+
+      // Update webinar registrant to "attended_booked" if they exist
+      if (b.webinar_id) {
+        await supabase
+          .from('ae_webinar_registrants')
+          .update({ pipeline_stage: 'attended_booked', booked: true, booked_at: new Date().toISOString() })
+          .eq('webinar_id', b.webinar_id)
+          .ilike('email', b.email);
+      }
+
+      // Send notification to Kristy via SMS
+      try {
+        var telnyxKey = process.env.TELNYX_API_KEY;
+        var telnyxFrom = process.env.TELNYX_FROM_NUMBER;
+        if (telnyxKey && telnyxFrom) {
+          var fullName = ((b.first_name || '') + ' ' + (b.last_name || '')).trim();
+          var notifMsg = '\ud83d\udcc5 NEW BOOKING\n' + fullName + '\n' + b.email + '\n' + (b.phone || '') + '\n' + b.booking_date + ' at ' + b.booking_time + ' EST';
+          await fetch('https://api.telnyx.com/v2/messages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + telnyxKey },
+            body: JSON.stringify({ from: telnyxFrom, to: '+12063135883', text: notifMsg })
+          });
+        }
+      } catch (e) { console.error('Booking SMS notify error:', e); }
+
+      // Send notification via email
+      try {
+        var resendKey = process.env.RESEND_API_KEY;
+        if (resendKey) {
+          var fullName2 = ((b.first_name || '') + ' ' + (b.last_name || '')).trim();
+          await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + resendKey, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              from: 'Agent Edge <kflach@kristyflach.com>',
+              to: ['kflach@prmg.net'],
+              subject: 'New Booking: ' + fullName2 + ' on ' + b.booking_date,
+              html: '<p>New consultation booked:</p><p><strong>' + fullName2 + '</strong><br>' + b.email + '<br>' + (b.phone || '') + '<br>' + b.booking_date + ' at ' + b.booking_time + ' EST</p>'
+            })
+          });
+        }
+      } catch (e) { console.error('Booking email notify error:', e); }
+
+      return res.status(200).json({ success: true, booking: booking });
+    }
+
+    // ===== LIST BOOKINGS =====
+    if (action === 'list_bookings') {
+      var today = new Date().toISOString().split('T')[0];
+      const { data, error } = await supabase
+        .from('ae_bookings')
+        .select('booking_date, booking_time')
+        .eq('status', 'confirmed')
+        .gte('booking_date', today);
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true, bookings: data || [] });
+    }
+
     return res.status(400).json({ success: false, message: 'Unknown action: ' + action });
 
   } catch (err) {
