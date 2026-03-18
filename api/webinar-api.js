@@ -306,7 +306,6 @@ export default async function handler(req, res) {
         source: 'webinar_register',
         type: 'client',
         root_type: 'client',
-        lo_user_id: loUser,
         data: { first_name: reg.first_name || '', last_name: reg.last_name || '', webinar_id: reg.webinar_id, webinar_title: webinarTitle, notes: notesText },
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
