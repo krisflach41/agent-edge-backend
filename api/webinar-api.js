@@ -156,16 +156,25 @@ export default async function handler(req, res) {
           .maybeSingle();
 
         if (!crmExisting) {
+          var crmId = 'crm-' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+          var fullName = ((r.first_name || '') + ' ' + (r.last_name || '')).trim();
           await supabase.from('crm_contacts').insert({
+            id: crmId,
+            name: fullName,
             first_name: r.first_name || '',
             last_name: r.last_name || '',
             email: r.email,
             phone: r.phone || '',
-            contact_source: 'webinar_register',
-            lo_user_id: r.lo_user_id || 'default'
+            source: 'webinar_register',
+            type: 'client',
+            root_type: 'client',
+            lo_user_id: r.lo_user_id || 'default',
+            data: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
           });
         }
-      } catch (e) { /* non-critical */ }
+      } catch (e) { console.error('CRM contact create error:', e); }
 
       return res.status(200).json({ success: true, registrant: reg });
     }
