@@ -187,6 +187,21 @@ export default async function handler(req, res) {
         }
       } catch (e) { console.error('CRM contact create error:', e.message || e); }
 
+      // Fire confirmation email + text immediately
+      try {
+        await fetch('https://agent-edge-backend.vercel.app/api/webinar-reminders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'send_confirmation',
+            webinar_id: r.webinar_id,
+            first_name: r.first_name || '',
+            email: r.email,
+            phone: r.phone || ''
+          })
+        });
+      } catch (e) { console.error('Confirmation send error:', e); }
+
       return res.status(200).json({ success: true, registrant: reg });
     }
 
