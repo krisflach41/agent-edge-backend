@@ -232,6 +232,144 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, webinar: data });
     }
 
+    // ===== LIST REGISTRANTS =====
+    if (action === 'list_registrants') {
+      var wId = req.body.webinar_id;
+      if (!wId) return res.status(400).json({ success: false, message: 'webinar_id required' });
+
+      const { data, error } = await supabase
+        .from('ae_webinar_registrants')
+        .select('*')
+        .eq('webinar_id', wId)
+        .order('registered_at', { ascending: true });
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true, registrants: data || [] });
+    }
+
+    // ===== SAVE NOTES =====
+    if (action === 'save_notes') {
+      var { registrant_id, notes } = req.body;
+      if (!registrant_id) return res.status(400).json({ success: false, message: 'registrant_id required' });
+
+      const { error } = await supabase
+        .from('ae_webinar_registrants')
+        .update({ notes: notes || '' })
+        .eq('id', registrant_id);
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true });
+    }
+
+    // ===== CREATE CRM FROM REGISTRANT =====
+    if (action === 'create_crm_from_registrant') {
+      var regId = req.body.registrant_id;
+      var loUser = req.body.lo_user_id || 'default';
+      if (!regId) return res.status(400).json({ success: false, message: 'registrant_id required' });
+
+      // Get registrant
+      const { data: reg, error: regErr } = await supabase
+        .from('ae_webinar_registrants')
+        .select('*')
+        .eq('id', regId)
+        .single();
+      if (regErr || !reg) return res.status(400).json({ success: false, message: 'Registrant not found' });
+
+      // Check if CRM already exists for this email
+      const { data: existing } = await supabase
+        .from('crm_contacts')
+        .select('id')
+        .ilike('email', reg.email)
+        .maybeSingle();
+
+      if (existing) {
+        // Link existing CRM card
+        await supabase.from('ae_webinar_registrants').update({ crm_id: existing.id }).eq('id', regId);
+        return res.status(200).json({ success: true, crm_id: existing.id, already_existed: true });
+      }
+
+      // Get webinar title for notes
+      var webinarTitle = '';
+      try {
+        const { data: wb } = await supabase.from('ae_webinars').select('title').eq('id', reg.webinar_id).single();
+        if (wb) webinarTitle = wb.title;
+      } catch (e) {}
+
+      // Create new CRM contact
+      var crmId = 'crm-' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+      var fullName = ((reg.first_name || '') + ' ' + (reg.last_name || '')).trim();
+      var notesText = 'Source: Webinar Registration\nWebinar: ' + webinarTitle + '\nRegistered: ' + (reg.registered_at || '') + (reg.notes ? '\n\nNotes:\n' + reg.notes : '');
+
+      const { error: insertErr } = await supabase.from('crm_contacts').insert({
+        id: crmId,
+        name: fullName,
+        first_name: reg.first_name || '',
+        last_name: reg.last_name || '',
+        email: reg.email,
+        phone: reg.phone || '',
+        source: 'webinar_register',
+        type: 'client',
+        root_type: 'client',
+        lo_user_id: loUser,
+        data: { webinar_id: reg.webinar_id, webinar_title: webinarTitle, notes: notesText },
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      });
+
+      if (insertErr) return res.status(500).json({ success: false, message: insertErr.message });
+
+      // Link CRM card to registrant
+      await supabase.from('ae_webinar_registrants').update({ crm_id: crmId }).eq('id', regId);
+      return res.status(200).json({ success: true, crm_id: crmId });
+    }
+
+    // ===== MOVE TO LOAN PIPELINE =====
+    if (action === 'move_to_loan_pipeline') {
+      var { registrant_id, crm_id, pipeline_stage, lo_user_id } = req.body;
+      if (!registrant_id || !crm_id || !pipeline_stage) return res.status(400).json({ success: false, message: 'registrant_id, crm_id, and pipeline_stage required' });
+
+      // Get CRM contact info
+      const { data: contact } = await supabase
+        .from('crm_contacts')
+        .select('*')
+        .eq('id', crm_id)
+        .single();
+
+      if (!contact) return res.status(400).json({ success: false, message: 'CRM contact not found' });
+
+      // Create loan in ae_loans
+      var aeId = 'AE-' + Date.now().toString(36).toUpperCase();
+      const { error: loanErr } = await supabase.from('ae_loans').insert({
+        ae_id: aeId,
+        borrower_name: contact.name || '',
+        borrower_email: contact.email || '',
+        borrower_phone: contact.phone || '',
+        crm_contact_id: crm_id,
+        pipeline_stage: pipeline_stage,
+        source: 'webinar',
+        user_id: lo_user_id || 'default',
+        status: 'active',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      });
+
+      if (loanErr) return res.status(500).json({ success: false, message: loanErr.message });
+
+      // Update registrant to mark as moved
+      await supabase.from('ae_webinar_registrants')
+        .update({ pipeline_stage: 'moved_to_pipeline', moved_to_loan: true })
+        .eq('id', registrant_id);
+
+      return res.status(200).json({ success: true, ae_id: aeId });
+    }
+
+    // ===== DELETE REGISTRANT =====
+    if (action === 'delete_registrant') {
+      var regId = req.body.registrant_id;
+      if (!regId) return res.status(400).json({ success: false, message: 'registrant_id required' });
+      const { error } = await supabase.from('ae_webinar_registrants').delete().eq('id', regId);
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true });
+    }
+
     return res.status(400).json({ success: false, message: 'Unknown action: ' + action });
 
   } catch (err) {
