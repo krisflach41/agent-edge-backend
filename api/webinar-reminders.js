@@ -74,7 +74,22 @@ export default async function handler(req, res) {
         var w = webinars[wi];
         if (!w.formatted_datetime) continue;
 
-        var webinarTime = new Date(w.formatted_datetime);
+        // Build timezone-aware datetime
+        var tzOffsets = {
+          'America/New_York': { standard: '-05:00', dst: '-04:00' },
+          'America/Chicago': { standard: '-06:00', dst: '-05:00' },
+          'America/Denver': { standard: '-07:00', dst: '-06:00' },
+          'America/Los_Angeles': { standard: '-08:00', dst: '-07:00' },
+          'America/Phoenix': { standard: '-07:00', dst: '-07:00' }
+        };
+        var tz = w.timezone || 'America/New_York';
+        var tzInfo = tzOffsets[tz] || tzOffsets['America/New_York'];
+        // Check if date is in DST (March second Sunday to November first Sunday)
+        var testDate = new Date(w.formatted_datetime + 'Z');
+        var month = testDate.getUTCMonth(); // 0-11
+        var isDST = month >= 2 && month <= 10; // rough DST check Mar-Nov
+        var offset = isDST ? tzInfo.dst : tzInfo.standard;
+        var webinarTime = new Date(w.formatted_datetime + offset);
         var diffMs = webinarTime.getTime() - now.getTime();
         var diffHours = diffMs / (1000 * 60 * 60);
         var diffMins = diffMs / (1000 * 60);
