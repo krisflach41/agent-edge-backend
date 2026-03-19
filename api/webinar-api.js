@@ -34,6 +34,7 @@ export default async function handler(req, res) {
         formatted_datetime: w.formatted_datetime,
         zoom_link: w.zoom_link,
         booking_link: w.booking_link,
+        replay_url: w.replay_url || null,
         headline: w.headline,
         subheadline: w.subheadline,
         expect_text: w.expect_text,
