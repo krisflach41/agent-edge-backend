@@ -509,7 +509,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, booking: booking });
     }
 
-    // ===== LIST BOOKINGS =====
+    // ===== LIST BOOKINGS (for public booking page — includes blocked times) =====
     if (action === 'list_bookings') {
       var today = new Date().toISOString().split('T')[0];
       const { data, error } = await supabase
@@ -518,7 +518,138 @@ export default async function handler(req, res) {
         .eq('status', 'confirmed')
         .gte('booking_date', today);
       if (error) return res.status(500).json({ success: false, message: error.message });
+
+      // Also fetch calendar events that block booking availability (out_of_office, blocked_time)
+      const { data: blockedEvents } = await supabase
+        .from('ae_calendar_events')
+        .select('event_date, start_time, end_time, all_day, category')
+        .in('category', ['out_of_office', 'blocked_time'])
+        .gte('event_date', today);
+
+      return res.status(200).json({ success: true, bookings: data || [], blocked_events: blockedEvents || [] });
+    }
+
+    // ===== LIST BOOKINGS FULL (for MC calendar — full details) =====
+    if (action === 'list_bookings_full') {
+      var rangeStart = req.body.start_date || new Date().toISOString().split('T')[0];
+      var rangeEnd = req.body.end_date || '2099-12-31';
+      const { data, error } = await supabase
+        .from('ae_bookings')
+        .select('*')
+        .eq('status', 'confirmed')
+        .gte('booking_date', rangeStart)
+        .lte('booking_date', rangeEnd)
+        .order('booking_date', { ascending: true });
+      if (error) return res.status(500).json({ success: false, message: error.message });
       return res.status(200).json({ success: true, bookings: data || [] });
+    }
+
+    // ===== UPDATE BOOKING =====
+    if (action === 'update_booking') {
+      var ub = req.body;
+      if (!ub.id) return res.status(400).json({ success: false, message: 'Booking id required' });
+
+      var updateFields = {};
+      if (ub.booking_date) updateFields.booking_date = ub.booking_date;
+      if (ub.booking_time) updateFields.booking_time = ub.booking_time;
+      if (ub.status) updateFields.status = ub.status;
+      if (ub.first_name !== undefined) updateFields.first_name = ub.first_name;
+      if (ub.last_name !== undefined) updateFields.last_name = ub.last_name;
+      if (ub.phone !== undefined) updateFields.phone = ub.phone;
+      if (ub.email !== undefined) updateFields.email = ub.email;
+
+      const { data, error } = await supabase
+        .from('ae_bookings')
+        .update(updateFields)
+        .eq('id', ub.id)
+        .select()
+        .single();
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true, booking: data });
+    }
+
+    // ===== CANCEL BOOKING =====
+    if (action === 'cancel_booking') {
+      var cbId = req.body.id;
+      if (!cbId) return res.status(400).json({ success: false, message: 'Booking id required' });
+      const { error } = await supabase
+        .from('ae_bookings')
+        .update({ status: 'cancelled' })
+        .eq('id', cbId);
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true });
+    }
+
+    // ===== CALENDAR EVENTS CRUD =====
+    if (action === 'list_calendar_events') {
+      var ceStart = req.body.start_date || new Date().toISOString().split('T')[0];
+      var ceEnd = req.body.end_date || '2099-12-31';
+      const { data, error } = await supabase
+        .from('ae_calendar_events')
+        .select('*')
+        .gte('event_date', ceStart)
+        .lte('event_date', ceEnd)
+        .order('event_date', { ascending: true });
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true, events: data || [] });
+    }
+
+    if (action === 'create_calendar_event') {
+      var ce = req.body;
+      if (!ce.title || !ce.event_date || !ce.category) {
+        return res.status(400).json({ success: false, message: 'Title, event_date, and category required' });
+      }
+      const { data, error } = await supabase
+        .from('ae_calendar_events')
+        .insert({
+          title: ce.title,
+          event_date: ce.event_date,
+          start_time: ce.start_time || null,
+          end_time: ce.end_time || null,
+          all_day: ce.all_day || false,
+          category: ce.category,
+          notes: ce.notes || '',
+          reminder: ce.reminder || false,
+          created_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true, event: data });
+    }
+
+    if (action === 'update_calendar_event') {
+      var ue = req.body;
+      if (!ue.id) return res.status(400).json({ success: false, message: 'Event id required' });
+      var ueFields = {};
+      if (ue.title !== undefined) ueFields.title = ue.title;
+      if (ue.event_date !== undefined) ueFields.event_date = ue.event_date;
+      if (ue.start_time !== undefined) ueFields.start_time = ue.start_time;
+      if (ue.end_time !== undefined) ueFields.end_time = ue.end_time;
+      if (ue.all_day !== undefined) ueFields.all_day = ue.all_day;
+      if (ue.category !== undefined) ueFields.category = ue.category;
+      if (ue.notes !== undefined) ueFields.notes = ue.notes;
+      if (ue.reminder !== undefined) ueFields.reminder = ue.reminder;
+
+      const { data, error } = await supabase
+        .from('ae_calendar_events')
+        .update(ueFields)
+        .eq('id', ue.id)
+        .select()
+        .single();
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true, event: data });
+    }
+
+    if (action === 'delete_calendar_event') {
+      var deId = req.body.id;
+      if (!deId) return res.status(400).json({ success: false, message: 'Event id required' });
+      const { error } = await supabase
+        .from('ae_calendar_events')
+        .delete()
+        .eq('id', deId);
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true });
     }
 
     return res.status(400).json({ success: false, message: 'Unknown action: ' + action });
