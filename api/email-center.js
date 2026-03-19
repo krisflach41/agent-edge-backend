@@ -849,6 +849,9 @@ function buildEmailWrapper(bodyHtml, toEmail) {
     '<td style="vertical-align: middle; padding-right: 12px;">' +
     '<img src="' + baseUrl + '/PRMG-Logo.png" alt="PRMG" height="28" style="display: block;" />' +
     '</td>' +
+    '<td style="vertical-align: middle; padding-right: 12px;">' +
+    '<img src="' + baseUrl + '/CMA%20Logo.png" alt="Certified Mortgage Advisor" height="28" style="display: block;" />' +
+    '</td>' +
     '<td style="vertical-align: middle;">' +
     '<img src="' + baseUrl + '/equal-housing-logo.png" alt="Equal Housing Opportunity" height="24" style="display: block;" />' +
     '</td>' +
