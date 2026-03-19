@@ -224,6 +224,28 @@ export default async function handler(req, res) {
             results.no_show++;
           }
         }
+
+        // ATTENDED BUT DIDN'T BOOK: 48+ hours after start
+        if (diffHours <= -48) {
+          for (var ri = 0; ri < registrants.length; ri++) {
+            var reg = registrants[ri];
+            if (reg.pipeline_stage !== 'attended') continue;
+            if (reg.booked) continue;
+
+            await supabase.from('ae_webinar_registrants')
+              .update({ pipeline_stage: 'attended_no_book' })
+              .eq('id', reg.id);
+
+            // Also update CRM card tags if linked
+            if (reg.crm_id) {
+              try {
+                await supabase.from('crm_contacts')
+                  .update({ tags: 'webinar:attended_no_book', updated_at: new Date().toISOString() })
+                  .eq('id', reg.crm_id);
+              } catch (e) {}
+            }
+          }
+        }
       }
 
       return res.status(200).json({ success: true, results: results });
