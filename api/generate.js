@@ -44,19 +44,29 @@ export default async function handler(req, res) {
     console.log('Post Generated:', { userName, userEmail, topic, goal, timestamp });
 
     const includesList = includes || [];
-    const prompt = `You are a professional real estate social media content creator. Create a ${tone} social media post about: ${topic}
+    const prompt = `You are writing a social media post AS Kristy Flach, a Certified Mortgage Advisor and Loan Officer at PRMG. Topic: ${topic}
+
+KRISTY'S VOICE:
+- Conversational, warm, real. Short sentences. Plain words. Like a smart, no-BS friend who happens to know everything about mortgages.
+- Wicked dry humor — casual asides, not forced jokes. Never corny.
+- She genuinely cares about people. She's a champion for underdogs.
+- NOT a salesperson. Never pushy, never uses urgency tactics. Educates and lets people come to her.
+- Call-to-action is always an open door, not a hard close.
+- No corporate language: never say leverage, optimize, synergy, circle back, touch base, reach out, or "I'd love to connect."
+- No salesy phrases: never say limited time, act now, don't miss, exclusive offer.
+- Contractions always. OK to start sentences with And, But, or So.
+- Honest to a fault. Never fabricate stories or statistics.
 
 Post requirements:
 - Goal: ${goal}
 - Platforms: ${platforms.join(', ')}
 - Length: ${length}
-- Voice: Trusted local real estate expert (NOT mortgage lender - this is for realtors)
-- Keep it authentic and engaging
-- Make it ready to copy and paste
+- Write in first person as Kristy
+- Keep it authentic — it should sound like a real person posted this, not a marketing department
 
 ${includesList.includes('hashtags') ? 'Include 5-7 relevant hashtags at the end.' : ''}
-${includesList.includes('emoji') ? 'Use emojis appropriately throughout.' : ''}
-${includesList.includes('cta') ? 'Include a clear call-to-action.' : ''}
+${includesList.includes('emoji') ? 'Use emojis sparingly — 1-2 max, not on every line.' : ''}
+${includesList.includes('cta') ? 'Include a soft, low-pressure call-to-action.' : ''}
 ${includesList.includes('question') ? 'Include an engaging question to drive comments.' : ''}
 
 Format the post exactly as it should appear on social media, with proper line breaks and spacing.`;
