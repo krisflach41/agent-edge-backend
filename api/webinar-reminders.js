@@ -170,7 +170,32 @@ export default async function handler(req, res) {
           }
         }
 
-        // 5 MIN AFTER START: -5 to -10 minutes (already started)
+        // 5 MIN BEFORE START: 3-7 minutes before
+        if (diffMins >= 3 && diffMins <= 7) {
+          for (var ri = 0; ri < registrants.length; ri++) {
+            var reg = registrants[ri];
+            if (reg.reminder_five_before) continue;
+            var fn = reg.first_name || 'there';
+            var personalLink = joinLink + '?email=' + encodeURIComponent(reg.email);
+
+            await sendEmail(
+              reg.email,
+              w.title + ' starts in 5 minutes!',
+              '<p>Hi ' + fn + ',</p>' +
+              '<p><strong>' + w.title + '</strong> starts in 5 minutes!</p>' +
+              '<p><a href="' + personalLink + '" style="display:inline-block;padding:14px 30px;background:#6e7f77;color:white;text-decoration:none;border-radius:6px;font-weight:bold;">Join Now</a></p>' +
+              '<p>— Kristy Flach</p>'
+            );
+
+            if (reg.phone && !reg.sms_unsubscribed) {
+              await sendSMS(reg.phone, w.title + ' starts in 5 minutes! Join now: ' + personalLink);
+            }
+
+            await supabase.from('ae_webinar_registrants').update({ reminder_five_before: true }).eq('id', reg.id);
+          }
+        }
+
+        // 5 MIN AFTER START: -5 to -10 minutes (already started) — only if they haven't joined
         if (diffMins >= -10 && diffMins <= -5) {
           for (var ri = 0; ri < registrants.length; ri++) {
             var reg = registrants[ri];
