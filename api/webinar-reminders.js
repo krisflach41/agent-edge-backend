@@ -246,6 +246,10 @@ export default async function handler(req, res) {
             await supabase.from('ae_webinar_registrants')
               .update({ pipeline_stage: 'did_not_attend' })
               .eq('id', reg.id);
+
+            // Auto-enroll in matching drip campaign
+            await autoEnrollWebinarCampaign('webinar_did_not_attend', reg, w);
+
             results.no_show++;
           }
         }
@@ -260,6 +264,9 @@ export default async function handler(req, res) {
             await supabase.from('ae_webinar_registrants')
               .update({ pipeline_stage: 'attended_no_book' })
               .eq('id', reg.id);
+
+            // Auto-enroll in matching drip campaign
+            await autoEnrollWebinarCampaign('webinar_attended_no_book', reg, w);
 
             // Also update CRM card tags if linked
             if (reg.crm_id) {
@@ -288,6 +295,66 @@ export default async function handler(req, res) {
 async function getWebinar(id) {
   const { data } = await supabase.from('ae_webinars').select('*').eq('id', id).single();
   return data;
+}
+
+async function autoEnrollWebinarCampaign(triggerType, registrant, webinar) {
+  try {
+    // Find active campaigns with this trigger type
+    const { data: campaigns } = await supabase
+      .from('ae_drip_campaigns')
+      .select('id, name')
+      .eq('trigger_type', triggerType)
+      .eq('status', 'active');
+
+    if (!campaigns || campaigns.length === 0) return;
+
+    var contactName = ((registrant.first_name || '') + ' ' + (registrant.last_name || '')).trim() || registrant.email;
+    var now = new Date().toISOString();
+
+    for (var ci = 0; ci < campaigns.length; ci++) {
+      var camp = campaigns[ci];
+
+      // Check if already enrolled
+      const { data: existing } = await supabase
+        .from('ae_drip_enrollments')
+        .select('id')
+        .eq('campaign_id', camp.id)
+        .ilike('contact_email', registrant.email)
+        .maybeSingle();
+
+      if (existing) continue;
+
+      // Get first step to calculate next_send_at
+      const { data: firstStep } = await supabase
+        .from('ae_drip_steps')
+        .select('delay_days')
+        .eq('campaign_id', camp.id)
+        .eq('step_order', 1)
+        .maybeSingle();
+
+      var delayDays = firstStep ? firstStep.delay_days : 0;
+      var nextSend = new Date();
+      nextSend.setDate(nextSend.getDate() + delayDays);
+
+      await supabase.from('ae_drip_enrollments').insert({
+        campaign_id: camp.id,
+        contact_email: registrant.email,
+        contact_name: contactName,
+        contact_phone: registrant.phone || '',
+        lo_user_id: webinar.lo_user_id || 'default',
+        status: 'active',
+        current_step: 0,
+        next_send_at: nextSend.toISOString(),
+        enrolled_at: now,
+        webinar_slug: webinar.slug || null,
+        webinar_id: webinar.id || null
+      });
+
+      console.log('Auto-enrolled ' + registrant.email + ' in campaign: ' + camp.name);
+    }
+  } catch (e) {
+    console.error('Auto-enroll error:', e);
+  }
 }
 
 async function sendEmail(to, subject, bodyHtml) {
