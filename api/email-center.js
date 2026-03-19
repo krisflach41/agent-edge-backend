@@ -151,6 +151,8 @@ export default async function handler(req, res) {
         name: c.name,
         description: c.description || '',
         trigger_type: c.trigger_type || 'manual',
+        category: c.category || 'custom',
+        stop_on_book: c.stop_on_book || false,
         status: c.status || 'draft',
         updated_at: new Date().toISOString()
       };
@@ -591,7 +593,7 @@ async function processDrips(res) {
     // Get all enrollments that are due
     const { data: due, error } = await supabase
       .from('ae_drip_enrollments')
-      .select('*, ae_drip_campaigns(status, lo_user_id)')
+      .select('*, ae_drip_campaigns(status, lo_user_id, stop_on_book)')
       .eq('status', 'active')
       .lte('next_send_at', now);
 
@@ -605,6 +607,24 @@ async function processDrips(res) {
 
       // Skip if campaign is paused
       if (enrollment.ae_drip_campaigns?.status !== 'active') continue;
+
+      // Check stop condition: stop if contact booked a consultation
+      if (enrollment.ae_drip_campaigns?.stop_on_book) {
+        try {
+          const { data: booking } = await supabase
+            .from('ae_bookings')
+            .select('id')
+            .ilike('email', enrollment.contact_email)
+            .eq('status', 'confirmed')
+            .maybeSingle();
+          if (booking) {
+            await supabase.from('ae_drip_enrollments')
+              .update({ status: 'stopped_booked', completed_at: now })
+              .eq('id', enrollment.id);
+            continue;
+          }
+        } catch (e) { /* if check fails, proceed with send */ }
+      }
 
       var nextStepOrder = enrollment.current_step + 1;
       var loUserId = enrollment.ae_drip_campaigns?.lo_user_id || enrollment.lo_user_id;
@@ -635,7 +655,7 @@ async function processDrips(res) {
         if (!smsText) continue;
 
         // Personalize
-        smsText = personalize(smsText, enrollment.contact_name, enrollment.contact_email);
+        smsText = personalize(smsText, enrollment.contact_name, enrollment.contact_email, enrollment.webinar_slug);
 
         // Look up contact phone and SMS opt-out status from CRM
         var contactPhone = enrollment.contact_phone || '';
@@ -713,8 +733,8 @@ async function processDrips(res) {
         if (!bodyHtml) continue;
 
         // Personalize
-        subject = personalize(subject, enrollment.contact_name, enrollment.contact_email);
-        bodyHtml = personalize(bodyHtml, enrollment.contact_name, enrollment.contact_email);
+        subject = personalize(subject, enrollment.contact_name, enrollment.contact_email, enrollment.webinar_slug);
+        bodyHtml = personalize(bodyHtml, enrollment.contact_name, enrollment.contact_email, enrollment.webinar_slug);
 
         // Send
         result = await sendEmail(
@@ -766,12 +786,24 @@ async function processDrips(res) {
 }
 
 // ===== PERSONALIZATION =====
-function personalize(text, name, email) {
+function personalize(text, name, email, webinarSlug) {
   var firstName = (name || '').split(' ')[0] || 'there';
-  return text
+  var result = text
     .replace(/\{\{name\}\}/g, name || 'there')
     .replace(/\{\{first_name\}\}/g, firstName)
     .replace(/\{\{email\}\}/g, email || '');
+
+  if (webinarSlug) {
+    result = result
+      .replace(/\{\{replay_link\}\}/g, 'https://kristyflach.com/landing/' + webinarSlug + '/replay')
+      .replace(/\{\{booking_link\}\}/g, 'https://kristyflach.com/landing/' + webinarSlug + '/book');
+  } else {
+    result = result
+      .replace(/\{\{replay_link\}\}/g, 'https://kristyflach.com')
+      .replace(/\{\{booking_link\}\}/g, 'https://kristyflach.com');
+  }
+
+  return result;
 }
 
 // ===== EMAIL WRAPPER =====
