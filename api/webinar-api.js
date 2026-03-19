@@ -42,6 +42,12 @@ export default async function handler(req, res) {
         host_name: w.host_name,
         host_email: w.host_email,
         host_phone: w.host_phone,
+        cobrand_crm_id: w.cobrand_crm_id || null,
+        cobrand_name: w.cobrand_name || null,
+        cobrand_company: w.cobrand_company || null,
+        cobrand_phone: w.cobrand_phone || null,
+        cobrand_email: w.cobrand_email || null,
+        cobrand_headshot_url: w.cobrand_headshot_url || null,
         status: w.status || 'draft'
       };
 
