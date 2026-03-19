@@ -655,7 +655,7 @@ async function processDrips(res) {
         if (!smsText) continue;
 
         // Personalize
-        smsText = personalize(smsText, enrollment.contact_name, enrollment.contact_email);
+        smsText = personalize(smsText, enrollment.contact_name, enrollment.contact_email, enrollment.webinar_slug);
 
         // Look up contact phone and SMS opt-out status from CRM
         var contactPhone = enrollment.contact_phone || '';
@@ -733,8 +733,8 @@ async function processDrips(res) {
         if (!bodyHtml) continue;
 
         // Personalize
-        subject = personalize(subject, enrollment.contact_name, enrollment.contact_email);
-        bodyHtml = personalize(bodyHtml, enrollment.contact_name, enrollment.contact_email);
+        subject = personalize(subject, enrollment.contact_name, enrollment.contact_email, enrollment.webinar_slug);
+        bodyHtml = personalize(bodyHtml, enrollment.contact_name, enrollment.contact_email, enrollment.webinar_slug);
 
         // Send
         result = await sendEmail(
@@ -786,12 +786,24 @@ async function processDrips(res) {
 }
 
 // ===== PERSONALIZATION =====
-function personalize(text, name, email) {
+function personalize(text, name, email, webinarSlug) {
   var firstName = (name || '').split(' ')[0] || 'there';
-  return text
+  var result = text
     .replace(/\{\{name\}\}/g, name || 'there')
     .replace(/\{\{first_name\}\}/g, firstName)
     .replace(/\{\{email\}\}/g, email || '');
+
+  if (webinarSlug) {
+    result = result
+      .replace(/\{\{replay_link\}\}/g, 'https://kristyflach.com/landing/' + webinarSlug + '/replay')
+      .replace(/\{\{booking_link\}\}/g, 'https://kristyflach.com/landing/' + webinarSlug + '/book');
+  } else {
+    result = result
+      .replace(/\{\{replay_link\}\}/g, 'https://kristyflach.com')
+      .replace(/\{\{booking_link\}\}/g, 'https://kristyflach.com');
+  }
+
+  return result;
 }
 
 // ===== EMAIL WRAPPER =====
