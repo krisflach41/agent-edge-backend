@@ -151,6 +151,8 @@ export default async function handler(req, res) {
         name: c.name,
         description: c.description || '',
         trigger_type: c.trigger_type || 'manual',
+        category: c.category || 'custom',
+        stop_on_book: c.stop_on_book || false,
         status: c.status || 'draft',
         updated_at: new Date().toISOString()
       };
@@ -591,7 +593,7 @@ async function processDrips(res) {
     // Get all enrollments that are due
     const { data: due, error } = await supabase
       .from('ae_drip_enrollments')
-      .select('*, ae_drip_campaigns(status, lo_user_id)')
+      .select('*, ae_drip_campaigns(status, lo_user_id, stop_on_book)')
       .eq('status', 'active')
       .lte('next_send_at', now);
 
@@ -605,6 +607,24 @@ async function processDrips(res) {
 
       // Skip if campaign is paused
       if (enrollment.ae_drip_campaigns?.status !== 'active') continue;
+
+      // Check stop condition: stop if contact booked a consultation
+      if (enrollment.ae_drip_campaigns?.stop_on_book) {
+        try {
+          const { data: booking } = await supabase
+            .from('ae_bookings')
+            .select('id')
+            .ilike('email', enrollment.contact_email)
+            .eq('status', 'confirmed')
+            .maybeSingle();
+          if (booking) {
+            await supabase.from('ae_drip_enrollments')
+              .update({ status: 'stopped_booked', completed_at: now })
+              .eq('id', enrollment.id);
+            continue;
+          }
+        } catch (e) { /* if check fails, proceed with send */ }
+      }
 
       var nextStepOrder = enrollment.current_step + 1;
       var loUserId = enrollment.ae_drip_campaigns?.lo_user_id || enrollment.lo_user_id;
@@ -637,18 +657,33 @@ async function processDrips(res) {
         // Personalize
         smsText = personalize(smsText, enrollment.contact_name, enrollment.contact_email);
 
-        // Look up contact phone from CRM
+        // Look up contact phone and SMS opt-out status from CRM
         var contactPhone = enrollment.contact_phone || '';
+        var smsOptedOut = false;
         if (!contactPhone) {
           const { data: contact } = await supabase
             .from('crm_contacts')
-            .select('phone')
+            .select('phone, sms_unsubscribed')
             .ilike('email', enrollment.contact_email)
             .maybeSingle();
-          if (contact && contact.phone) contactPhone = contact.phone;
+          if (contact) {
+            if (contact.phone) contactPhone = contact.phone;
+            if (contact.sms_unsubscribed) smsOptedOut = true;
+          }
+        } else {
+          // Have phone but still check opt-out
+          const { data: contact } = await supabase
+            .from('crm_contacts')
+            .select('sms_unsubscribed')
+            .ilike('email', enrollment.contact_email)
+            .maybeSingle();
+          if (contact && contact.sms_unsubscribed) smsOptedOut = true;
         }
 
-        if (!contactPhone) {
+        if (smsOptedOut) {
+          // Contact opted out of SMS — skip this step but advance
+          result = { success: true, skipped: 'sms_unsubscribed' };
+        } else if (!contactPhone) {
           // No phone number — skip this step but advance
           result = { success: true, skipped: 'no_phone' };
         } else {
