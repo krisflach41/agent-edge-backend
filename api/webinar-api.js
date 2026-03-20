@@ -652,6 +652,172 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true });
     }
 
+    // ===== LANDING PAGES CRUD =====
+    if (action === 'get_landing_page') {
+      var lpSlug = req.body.slug;
+      if (!lpSlug) return res.status(400).json({ success: false, message: 'Slug required' });
+      const { data, error } = await supabase
+        .from('ae_landing_pages')
+        .select('*')
+        .eq('slug', lpSlug)
+        .eq('status', 'published')
+        .maybeSingle();
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      if (!data) return res.status(404).json({ success: false, message: 'Page not found' });
+
+      // If co-branded, fetch partner info
+      if (data.cobrand_crm_id) {
+        const { data: partner } = await supabase
+          .from('crm_contacts')
+          .select('first_name, last_name, company, email, headshot_url')
+          .eq('id', data.cobrand_crm_id)
+          .maybeSingle();
+        if (partner) {
+          data.cobrand_name = ((partner.first_name || '') + ' ' + (partner.last_name || '')).trim();
+          data.cobrand_company = partner.company || '';
+          data.cobrand_headshot_url = partner.headshot_url || '';
+        }
+      }
+
+      return res.status(200).json({ success: true, page: data });
+    }
+
+    if (action === 'list_landing_pages') {
+      const { data, error } = await supabase
+        .from('ae_landing_pages')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) return res.status(500).json({ success: false, message: error.message });
+
+      // Fetch analytics counts per page
+      for (var lpi = 0; lpi < (data || []).length; lpi++) {
+        var pg = data[lpi];
+        const { count: viewCount } = await supabase
+          .from('ae_landing_analytics')
+          .select('*', { count: 'exact', head: true })
+          .eq('landing_page_id', pg.id)
+          .eq('event_type', 'view');
+        pg.views = viewCount || 0;
+
+        const { count: clickCount } = await supabase
+          .from('ae_landing_analytics')
+          .select('*', { count: 'exact', head: true })
+          .eq('landing_page_id', pg.id)
+          .in('event_type', ['cta_click_book', 'cta_click_call', 'cta_click']);
+        pg.clicks = clickCount || 0;
+      }
+
+      return res.status(200).json({ success: true, pages: data || [] });
+    }
+
+    if (action === 'create_landing_page') {
+      var lp = req.body;
+      if (!lp.title || !lp.slug || !lp.headline) {
+        return res.status(400).json({ success: false, message: 'Title, slug, and headline required' });
+      }
+      // Clean slug
+      var cleanSlug = lp.slug.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+
+      const { data, error } = await supabase
+        .from('ae_landing_pages')
+        .insert({
+          slug: cleanSlug,
+          title: lp.title,
+          headline: lp.headline,
+          subheadline: lp.subheadline || '',
+          tag_text: lp.tag_text || 'FREE CONSULTATION',
+          body_html: lp.body_html || '',
+          video_url: lp.video_url || '',
+          hero_image: lp.hero_image || '',
+          cta_primary_text: lp.cta_primary_text || 'Book a Free Consultation',
+          cta_primary_action: lp.cta_primary_action || 'book',
+          cta_secondary_text: lp.cta_secondary_text || '',
+          cta_secondary_action: lp.cta_secondary_action || '',
+          campaign_tag: lp.campaign_tag || cleanSlug,
+          cobrand_crm_id: lp.cobrand_crm_id || null,
+          status: lp.status || 'draft',
+          created_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true, page: data });
+    }
+
+    if (action === 'update_landing_page') {
+      var ulp = req.body;
+      if (!ulp.id) return res.status(400).json({ success: false, message: 'Page id required' });
+      var ulpFields = {};
+      ['title','slug','headline','subheadline','tag_text','body_html','video_url','hero_image',
+       'cta_primary_text','cta_primary_action','cta_secondary_text','cta_secondary_action',
+       'campaign_tag','cobrand_crm_id','status'].forEach(function(f) {
+        if (ulp[f] !== undefined) ulpFields[f] = ulp[f];
+      });
+      if (ulpFields.slug) {
+        ulpFields.slug = ulpFields.slug.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+      }
+      const { data, error } = await supabase
+        .from('ae_landing_pages')
+        .update(ulpFields)
+        .eq('id', ulp.id)
+        .select()
+        .single();
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true, page: data });
+    }
+
+    if (action === 'delete_landing_page') {
+      var dlpId = req.body.id;
+      if (!dlpId) return res.status(400).json({ success: false, message: 'Page id required' });
+      // Delete analytics too
+      await supabase.from('ae_landing_analytics').delete().eq('landing_page_id', dlpId);
+      const { error } = await supabase.from('ae_landing_pages').delete().eq('id', dlpId);
+      if (error) return res.status(500).json({ success: false, message: error.message });
+      return res.status(200).json({ success: true });
+    }
+
+    // ===== LANDING PAGE ANALYTICS =====
+    if (action === 'log_landing_event') {
+      var le = req.body;
+      await supabase.from('ae_landing_analytics').insert({
+        landing_page_id: le.landing_page_id || null,
+        campaign_tag: le.campaign_tag || '',
+        source: le.source || '',
+        event_type: le.event_type || 'view',
+        visitor_id: le.visitor_id || '',
+        created_at: new Date().toISOString()
+      }).catch(function() {});
+      return res.status(200).json({ success: true });
+    }
+
+    if (action === 'get_landing_analytics') {
+      var aPageId = req.body.landing_page_id;
+      const { data, error } = await supabase
+        .from('ae_landing_analytics')
+        .select('event_type, source, created_at')
+        .eq('landing_page_id', aPageId)
+        .order('created_at', { ascending: false })
+        .limit(500);
+      if (error) return res.status(500).json({ success: false, message: error.message });
+
+      // Aggregate
+      var views = 0, clicks = 0, sources = {};
+      (data || []).forEach(function(e) {
+        if (e.event_type === 'view') views++;
+        if (e.event_type.indexOf('cta_click') === 0) clicks++;
+        if (e.source) {
+          if (!sources[e.source]) sources[e.source] = { views: 0, clicks: 0 };
+          if (e.event_type === 'view') sources[e.source].views++;
+          if (e.event_type.indexOf('cta_click') === 0) sources[e.source].clicks++;
+        }
+      });
+
+      return res.status(200).json({
+        success: true,
+        analytics: { views: views, clicks: clicks, conversion: views > 0 ? Math.round((clicks/views)*100) : 0, sources: sources, events: data || [] }
+      });
+    }
+
     return res.status(400).json({ success: false, message: 'Unknown action: ' + action });
 
   } catch (err) {
