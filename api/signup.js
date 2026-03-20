@@ -129,6 +129,7 @@ export default async function handler(req, res) {
           website: website || existingCrm.website || null,
           type: 'realtor',
           root_type: existingCrm.root_type || 'realtor',
+          designations: [...new Set([...(existingCrm.designations || []), 'partner'])],
           source: existingCrm.source ? existingCrm.source + ', portal_signup' : 'portal_signup',
           ae_id: aeId,
           updated_at: now
@@ -153,6 +154,7 @@ export default async function handler(req, res) {
           website: website || '',
           type: 'realtor',
           root_type: 'realtor',
+          designations: ['partner'],
           source: 'portal_signup',
           ae_id: aeId,
           created_at: now,
