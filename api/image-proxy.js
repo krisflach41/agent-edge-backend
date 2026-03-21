@@ -24,7 +24,7 @@ export default async function handler(req, res) {
 
   // Only allow image fetching from trusted domains
   var allowed = false;
-  var trustedDomains = ['drive.google.com', 'lh3.googleusercontent.com', 'images.unsplash.com', 'plus.unsplash.com'];
+  var trustedDomains = ['drive.google.com', 'lh3.googleusercontent.com', 'lh4.googleusercontent.com', 'lh5.googleusercontent.com', 'lh6.googleusercontent.com', 'googleusercontent.com', 'docs.google.com', 'images.unsplash.com', 'plus.unsplash.com'];
   try {
     var parsed = new URL(imageUrl);
     for (var i = 0; i < trustedDomains.length; i++) {
