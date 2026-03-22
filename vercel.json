@@ -38,6 +38,10 @@
       "memory": 1024,
       "maxDuration": 45
     },
+    "api/content-calendar.js": {
+      "memory": 1024,
+      "maxDuration": 120
+    },
     "api/image-proxy.js": {
       "memory": 1024,
       "maxDuration": 30
