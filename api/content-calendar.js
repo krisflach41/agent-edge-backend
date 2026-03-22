@@ -1,10 +1,4 @@
 // /api/content-calendar.js — Content Calendar AI generator for Media Lab
-// POST { action, ...params }
-//
-// Actions:
-//   generate-month   { month, year, priorities, videoPostSplit }  → { days: [...] }
-//   regenerate-day   { date, category, contentType, priorities }  → { day: {...} }
-
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -19,94 +13,54 @@ export default async function handler(req, res) {
   const { action } = body;
   if (!action) return res.status(400).json({ error: 'action required' });
 
-  // ============================================================
-  // KRISTY'S PROFILE
-  // ============================================================
-  const KRISTY_PROFILE = `
-You are writing as Kristy Flach.
-
-WHO SHE IS:
-Kristy Flach is a Certified Mortgage Advisor (CMA) and Loan Officer at Paramount Residential Mortgage Group (PRMG), NMLS #2632259, licensed in 49 states (all except New York), with over 20 years in the mortgage industry. She is 60 years old, an Army veteran, a champion for underdogs and people who get overlooked.
-
-HER VOICE — THIS IS CRITICAL:
-- Conversational, warm, real. Short sentences. Plain words. Like a smart, no-BS friend who happens to know everything about mortgages.
+  const KRISTY_PROFILE = `You are writing as Kristy Flach.
+WHO SHE IS: Kristy Flach is a Certified Mortgage Advisor (CMA) and Loan Officer at Paramount Residential Mortgage Group (PRMG), NMLS #2632259, licensed in 49 states (all except New York), with over 20 years in the mortgage industry. She is 60 years old, an Army veteran, a champion for underdogs. She built her own SaaS platform called Agent Edge. Her YouTube channel is "House Money with Kristy."
+HER VOICE — CRITICAL:
+- Conversational, warm, real. Short sentences. Plain words. Like a smart, no-BS friend who knows everything about mortgages.
 - Dry, quick humor — casual asides, not forced jokes.
 - NOT a salesperson. Never pushes, never uses urgency tactics.
-- Her call-to-action is always an open door: "If you have questions, I'm here."
 - Honest to a fault. Would never hurt anyone's feelings.
-- SHORT. Punchy. Conversational. Like a real person, not a LinkedIn post.
+- SHORT. Punchy. Like a real person, not a LinkedIn post.
 - If a 12-year-old can't follow it, rewrite it.
 - Contractions always. OK to start sentences with And, But, or So.
-- No corporate language: never say leverage, optimize, synergy, circle back, touch base, reach out, or "I'd love to connect."
+- No corporate language: never say leverage, optimize, synergy, circle back, touch base, reach out.
 - No salesy phrases: never say limited time, act now, don't miss, exclusive offer.
-- No exclamation points on every sentence — use sparingly.
-- No fake urgency or manufactured scarcity.
-- NEVER fabricate stories, client anecdotes, or specific scenarios. No made-up "I had a client who..." stories.
-- Write in first person as Kristy ("I", "my clients", "reach out to me").
-`.trim();
+- NEVER fabricate stories or client anecdotes. No made-up scenarios.
+- Write in first person as Kristy.`.trim();
 
-  // ============================================================
-  // VIRAL CONTENT RULES
-  // ============================================================
-  const VIRAL_RULES = `
-SCROLL-STOPPING CONTENT RULES — APPLY TO EVERY SINGLE POST AND SCRIPT:
+  const VIRAL_RULES = `SCROLL-STOPPING RULES FOR EVERY POST AND SCRIPT:
 
-THE HOOK (First line):
-- The very first sentence must stop someone mid-scroll. This is the most important line.
-- Use: surprise, a bold claim, a counterintuitive truth, a curiosity gap, a direct challenge, or a question that hits a nerve.
-- NEVER start with a generic opener like "Hey everyone" or "Happy Monday" or "Did you know."
-- Hook formulas that work: "Nobody tells you this, but...", "Stop scrolling if you...", "This is the biggest mistake...", "Here's what your [realtor/CPA/planner] won't say...", "I'm going to say something controversial...", pattern interrupts, myth-busting openers.
-- The hook must make someone think "wait, what?" — that's the test.
+THE 3 HOOK RULE:
+1. VISUAL HOOK — for videos, describe what Kristy does on camera in the first second. For posts, the first line IS the visual hook.
+2. TEXT OVERLAY — 3-7 words on screen for sound-off viewers. 92% watch Instagram with sound off. Make it punchy and curiosity-driven.
+3. VERBAL/WRITTEN HOOK — First sentence must make someone think "wait, what?" Use surprise, bold claims, curiosity gaps, direct challenges.
 
-TEXT OVERLAY (For video scripts):
-- Provide a 3-7 word text overlay suggestion that works with sound OFF.
-- This is what people READ on screen before they hear you talk.
-- It should be punchy, curiosity-driven, and visually scannable.
-- Examples: "Your CPA is missing this" / "Stop doing this before you buy" / "The math doesn't lie"
+HOOK FORMULAS: "Nobody tells you this, but..." / "Stop scrolling if you..." / "This is the biggest mistake..." / "Here's what your [partner] won't say..." / "Unpopular opinion:..." / "[Common belief]? Wrong."
+NEVER start with: "Hey everyone", "Happy Monday", "Did you know", "In today's video", "So today I want to talk about"
 
-EMOTIONS THAT GO VIRAL:
-- Surprise and awe drive shares. Anxiety about missing out (done subtly) drives action.
-- Authenticity and relatability are the #1 traits people want in 2025-2026.
-- Love and warmth build community. Humor builds loyalty.
-- Avoid pure anger, pure sadness, or generic joy — those slow spread.
+EMOTIONS THAT DRIVE SHARES: Surprise and awe are #1. Love and warmth build community. Curiosity gaps prevent scrolling. Authenticity and relatability are top traits audiences want. AVOID pure anger, sadness, or generic positivity.
 
-FUN FACT SIGN-OFF:
-- EVERY post and script must end with a fun fact, totally unrelated to the mortgage content.
-- Format: "Today's fun fact: [fact]"
-- Pull from: state trivia, weird state laws, bizarre festivals, odd state symbols, state fair facts, quirky Americana, fun historical moments, weird world records by state, strange town names, unusual state foods, state animal facts.
-- Make it genuinely surprising, funny, or delightful. Kristy's dry humor should show.
-- This should feel like a little gift at the end — something people look forward to and share.
-- Rotate across all 49 states she serves (not New York) throughout the month. Don't repeat states within a month.
+CALL TO ACTION — EVERY POST MUST HAVE ONE:
+- DM-DRIVING: "Comment REFI and I'll send you the breakdown" / "DM me 'tax' for the checklist"
+- SHARE-DRIVING: "Send this to a realtor you work with" / "Tag a CPA who needs this"
+- COLLABORATIVE: "Show this to your lender — if they can't explain it, call me"
+- Keep it Kristy's style — low pressure, open door, but SPECIFIC.
 
-STRUCTURE:
-- Every piece of content should feel like it was written by a real, specific human — not a content mill.
-- Short paragraphs. One idea per post. Don't try to say everything.
-- End business content naturally before the fun fact sign-off.
-`.trim();
+KEYWORDS OVER HASHTAGS: Write searchable phrases naturally into captions. 3-5 hashtags max at the end.
 
-  // ============================================================
-  // CONTENT CATEGORIES
-  // ============================================================
-  const CATEGORY_DETAILS = `
-CONTENT CATEGORIES AND WHAT THEY MEAN:
+COLLABORATIVE FRAMING for partner content: Talk WITH partners, not AT them. Make THEM look smart. Position the partner as the hero.
 
-1. REALTOR/PARTNER OUTREACH — Content aimed at real estate agents, CPAs, tax accountants, divorce attorneys, financial planners, wedding consultants, bridal shops, wedding venues. The goal is to position Kristy as the lender they should be referring clients to. Use referral-trigger education, cross-professional collaboration angles, and content that makes THEM look smart to their clients.
+FUN FACT SIGN-OFF — EVERY POST: End with "Today's fun fact: [fact]" — totally unrelated to mortgage. State trivia, weird laws, bizarre festivals, odd state symbols, quirky Americana. Genuinely surprising or funny. Rotate across 49 states (not NY).`.trim();
 
-2. REFINANCE CLIENTS — Content for homeowners who already have a mortgage and might benefit from refinancing. Rate changes, equity strategies, cash-out scenarios, debt consolidation, removing PMI, shortening loan terms.
-
-3. PURCHASE CLIENTS — Content for people buying homes: first-time buyers, move-up buyers, investors, self-employed buyers, credit-challenged buyers, people buying after marriage/divorce/job change. FHA, VA, USDA, conventional, jumbo, construction, DSCR.
-
-4. EDUCATIONAL — Deeper educational content that builds trust and authority. Consumer trust content, market intelligence, how mortgage decisions fit into wealth building, credit education, process simplification, myth-busting.
-
-5. SILLY/FUN — Pure personality content. Nothing to do with lending or real estate. Let people get to know Kristy as a person. Humor, life observations, pet content, food takes, travel stories, pop culture, general silliness. This is the "I'm a real human" content.
-
-CONTENT ANGLE TYPES TO USE (rotate through these):
-- Mistakes / Myths / Objections / Belief shifts
-- Tips / Questions / Contrasts / Stories
-- Fear & mistake content (scroll-stopping)
-- Scenario-based content (specific situations)
-- Process simplification content
-`.trim();
+  const AUDIENCE_DETAILS = `AUDIENCES:
+REALTORS — Make them want to refer to Kristy. Show how she makes their deals close faster.
+CPAS — Mortgage-tax intersections. When they should introduce a lender.
+DIVORCE ATTORNEYS — Mortgage planning during divorce. When to bring in a lender.
+FINANCIAL PLANNERS — Mortgage as wealth-building tool. Rate optimization, equity strategies.
+WEDDING PROS — Help engaged couples plan financing alongside weddings.
+BUYERS — First-time, move-up, investors, self-employed, credit-challenged, veterans. All loan types.
+SELLERS — Selling and buying simultaneously. Bridge strategies, equity optimization.
+PAST CLIENTS/SPHERE — Stay top of mind. Referral generation without being pushy.`.trim();
 
   try {
     let systemPrompt = '';
@@ -114,120 +68,29 @@ CONTENT ANGLE TYPES TO USE (rotate through these):
     let maxTokens = 4096;
 
     switch (action) {
-
-      // ---- GENERATE FULL MONTH ----
       case 'generate-month': {
-        const { month, year, priorities, videoPostSplit } = body;
-        if (!month || !year || !priorities) return res.status(400).json({ error: 'month, year, and priorities required' });
-
+        const { month, year, audience, mood, topics, videoPostSplit } = body;
+        if (!month || !year) return res.status(400).json({ error: 'month and year required' });
         const videoPercent = (videoPostSplit && videoPostSplit.video) || 80;
-        const postPercent = (videoPostSplit && videoPostSplit.post) || 20;
-
-        // Calculate days in month
         const daysInMonth = new Date(year, month, 0).getDate();
-
-        // Calculate how many days per category
-        const categoryBreakdown = Object.entries(priorities)
-          .map(function([cat, pct]) { return cat + ': ' + Math.round((pct / 100) * daysInMonth) + ' days (' + pct + '%)'; })
-          .join('\n');
-
         const videoDays = Math.round((videoPercent / 100) * daysInMonth);
         const postDays = daysInMonth - videoDays;
 
-        systemPrompt = `${KRISTY_PROFILE}
+        const audienceBreakdown = audience ? Object.entries(audience).filter(([k,v]) => v > 0).map(([k,v]) => k.replace(/_/g,' ') + ': ' + Math.round((v/100)*daysInMonth) + ' days (' + v + '%)').join('\n') : 'Spread evenly';
+        const moodBreakdown = mood ? Object.entries(mood).filter(([k,v]) => v > 0).map(([k,v]) => k + ': ' + Math.round((v/100)*daysInMonth) + ' days (' + v + '%)').join('\n') : 'Spread evenly';
 
-${VIRAL_RULES}
+        systemPrompt = KRISTY_PROFILE + '\n\n' + VIRAL_RULES + '\n\n' + AUDIENCE_DETAILS + '\n\nYou are generating a full month of social media content.\n\nMONTH: ' + month + '/' + year + ' (' + daysInMonth + ' days)\n\nAUDIENCE MIX:\n' + audienceBreakdown + '\n\nMOOD MIX:\n' + moodBreakdown + '\n\n' + (topics ? 'TOPICS TO COVER:\n' + topics + '\n\n' : '') + 'CONTENT SPLIT:\n- Video scripts (30 sec max, ~75 words): ' + videoDays + ' days\n- Written posts: ' + postDays + ' days\nSpread evenly.\n\nEVENTS: Check for state birthdays, holidays, awareness months, cultural events, sporting events, state fairs. Weave in state trivia.\n\nOUTPUT: Return ONLY a valid JSON object. No markdown. No backticks. No explanation before or after. Just JSON.\n{"days":[{"date":"YYYY-MM-DD","audience":"realtors|cpas|divorce_attorneys|financial_planners|wedding_pros|buyers|sellers|past_clients","mood":"educational|surprising|funny|heartfelt|bold|relatable","contentType":"video|post","topic":"Short topic 10 words max","hook":"Scroll-stopping first line","textOverlay":"3-7 words for screen or null","content":"Full content","funFact":"Today\'s fun fact: ...","event":"Event or null","cta":"Specific call to action"}]}\n\nRULES:\n- Generate ALL ' + daysInMonth + ' days. No gaps.\n- Each day unique. No filler.\n- Video scripts: 75 words MAX.\n- Posts: 80-150 words.\n- Every hook must stop scrolling.\n- Every post has a specific CTA.\n- Every post ends with fun fact.\n- Match Kristy\'s voice exactly.';
 
-${CATEGORY_DETAILS}
-
-You are generating a full month of social media content for Kristy's Content Calendar.
-
-MONTH: ${month}/${year} (${daysInMonth} days)
-
-PRIORITY MIX FOR THIS MONTH:
-${categoryBreakdown}
-
-CONTENT TYPE SPLIT:
-- Video scripts (30 seconds max, ~75 words): ${videoDays} days
-- Written posts (caption for social media): ${postDays} days
-Spread video and post days throughout the month — don't cluster them.
-
-EVENTS AND MILESTONES:
-- Check for state birthdays (admission dates), national holidays, awareness months, major cultural events, sporting events, state fairs, and notable dates that fall in this month.
-- Use these as content topics where they fit naturally, or as enhanced fun facts.
-- Rotate across different states throughout the month.
-
-OUTPUT FORMAT — return ONLY valid JSON, no markdown, no backticks, no explanation:
-{
-  "days": [
-    {
-      "date": "YYYY-MM-DD",
-      "category": "realtor_outreach|refinance|purchase|educational|silly_fun",
-      "contentType": "video|post",
-      "topic": "Short topic description (10 words max)",
-      "hook": "The scroll-stopping first line",
-      "textOverlay": "3-7 word text overlay for video (null for posts)",
-      "content": "The full post caption or video script",
-      "funFact": "Today's fun fact: ...",
-      "event": "Any relevant event/holiday for this date or null"
-    }
-  ]
-}
-
-CRITICAL RULES:
-- Generate content for EVERY day of the month. ${daysInMonth} days total.
-- Each day must have unique, specific content — no filler, no repeats.
-- Video scripts must be 75 words or less (30 seconds).
-- Written posts should be 80-150 words.
-- The hook must be genuinely scroll-stopping. Test: would someone stop scrolling for this?
-- Every single day ends with a fun fact that's genuinely surprising or funny.
-- Spread categories evenly across the month according to the priority percentages.
-- Spread video/post days evenly — don't put all videos in one week.
-- Match Kristy's voice exactly. Read the voice profile again before writing.`;
-
-        userMessage = `Generate the complete content calendar for ${month}/${year}. Every day needs content. Return valid JSON only.`;
+        userMessage = 'Generate the complete content calendar for ' + month + '/' + year + '. Return ONLY the JSON object. No backticks. No markdown formatting.';
         break;
       }
 
-      // ---- REGENERATE SINGLE DAY ----
       case 'regenerate-day': {
         const { date, category, contentType, event } = body;
         if (!date) return res.status(400).json({ error: 'date required' });
-
         maxTokens = 800;
-
-        systemPrompt = `${KRISTY_PROFILE}
-
-${VIRAL_RULES}
-
-${CATEGORY_DETAILS}
-
-You are regenerating a single day's content for Kristy's Content Calendar.
-
-OUTPUT FORMAT — return ONLY valid JSON, no markdown, no backticks, no explanation:
-{
-  "date": "${date}",
-  "category": "${category || 'educational'}",
-  "contentType": "${contentType || 'post'}",
-  "topic": "Short topic description (10 words max)",
-  "hook": "The scroll-stopping first line",
-  "textOverlay": "3-7 word text overlay for video (null for posts)",
-  "content": "The full post caption or video script",
-  "funFact": "Today's fun fact: ...",
-  "event": "Any relevant event/holiday for this date or null"
-}
-
-RULES:
-- This must be DIFFERENT from what was previously generated — fresh topic, fresh angle.
-- Video scripts must be 75 words or less (30 seconds).
-- Written posts should be 80-150 words.
-- The hook must genuinely stop someone mid-scroll.
-- End with a fun fact — surprising, funny, unrelated to mortgage content.
-- Match Kristy's voice exactly.`;
-
-        userMessage = date && event
-          ? `Regenerate content for ${date}. Category: ${category || 'educational'}. Type: ${contentType || 'post'}. There's a relevant event: ${event}. Make it fresh and different from before.`
-          : `Regenerate content for ${date}. Category: ${category || 'educational'}. Type: ${contentType || 'post'}. Make it fresh and different from before.`;
+        systemPrompt = KRISTY_PROFILE + '\n\n' + VIRAL_RULES + '\n\n' + AUDIENCE_DETAILS + '\n\nRegenerate a single day. Make it COMPLETELY different — fresh angle, unexpected hook.\n\nReturn ONLY valid JSON. No backticks. No markdown:\n{"date":"' + date + '","audience":"' + (category || 'buyers') + '","mood":"surprising","contentType":"' + (contentType || 'post') + '","topic":"Short topic","hook":"Scroll-stopping line","textOverlay":"3-7 words or null","content":"Full content","funFact":"Today\'s fun fact: ...","event":null,"cta":"Specific CTA"}';
+        userMessage = 'Regenerate content for ' + date + '. Audience: ' + (category || 'buyers') + '. Type: ' + (contentType || 'post') + '.' + (event ? ' Event: ' + event + '.' : '') + ' Fresh and different. ONLY JSON, no backticks.';
         break;
       }
 
@@ -235,22 +98,10 @@ RULES:
         return res.status(400).json({ error: 'Unknown action: ' + action });
     }
 
-    // ============================================================
-    // CALL ANTHROPIC
-    // ============================================================
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: maxTokens,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userMessage }]
-      })
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: maxTokens, system: systemPrompt, messages: [{ role: 'user', content: userMessage }] })
     });
 
     const data = await response.json();
@@ -259,11 +110,13 @@ RULES:
     const raw = data.content && data.content[0] ? data.content[0].text.trim() : '';
 
     try {
-      const cleaned = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+      let cleaned = raw;
+      cleaned = cleaned.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+      if (cleaned.charCodeAt(0) === 0xFEFF) cleaned = cleaned.slice(1);
       const parsed = JSON.parse(cleaned);
       return res.status(200).json({ success: true, ...parsed });
     } catch (e) {
-      return res.status(200).json({ success: true, raw: raw, parseError: 'Could not parse AI response as JSON' });
+      return res.status(200).json({ success: true, raw: raw, parseError: e.message });
     }
 
   } catch (err) {
