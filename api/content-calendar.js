@@ -65,7 +65,7 @@ PAST CLIENTS/SPHERE — Stay top of mind. Referral generation without being push
   try {
     let systemPrompt = '';
     let userMessage = '';
-    let maxTokens = 4096;
+    let maxTokens = 16000;
 
     switch (action) {
       case 'generate-month': {
