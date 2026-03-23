@@ -35,20 +35,19 @@ module.exports = async (req, res) => {
 
       var calendarPrompt = `You are reading a screenshot of a weekly economic calendar. Extract ALL events for each day.
 
+CRITICAL: Read the column headers carefully. Each column is labeled with a day of the week and a date number. Match events to the CORRECT column — do NOT shift events to the wrong day. If a day's column is empty (no events listed), that day has zero events.
+
 Return ONLY valid JSON in this exact format (no markdown, no backticks, no explanation):
 {
   "weekLabel": "WEEK OF MONTH DAY-DAY, YEAR",
   "days": [
     {
       "day": "Monday",
-      "events": [
-        {"time": "10:00 AM", "name": "Factory Orders"}
-      ]
+      "events": []
     },
     {
       "day": "Tuesday",
       "events": [
-        {"time": "7:00 AM", "name": "China Rate Decision"},
         {"time": "8:15 AM", "name": "ADP Weekly Preliminary Estimate"}
       ]
     }
@@ -56,9 +55,10 @@ Return ONLY valid JSON in this exact format (no markdown, no backticks, no expla
 }
 
 Rules:
+- Include ALL FIVE days Monday through Friday, even if a day has no events (use empty events array)
+- Match events to the CORRECT day column based on the column header, not position
+- If a day column is blank/empty, include it with "events": []
 - Include EVERY event visible for each day, with time and name
-- If a day has no events, include it with an empty events array
-- Only include Monday through Friday
 - Use the exact event names as shown in the image
 - Return ONLY the JSON object, nothing else`;
 
