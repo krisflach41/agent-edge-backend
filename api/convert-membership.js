@@ -100,20 +100,18 @@ export default async function handler(req, res) {
       const formBody = new URLSearchParams();
       formBody.append('_subject', 'PARTNER CONVERSION! ' + (userData?.full_name || cleanEmail));
       formBody.append('Full_Name', userData?.full_name || 'Unknown');
-      formBody.append('Email', cleanEmail);
-      formBody.append('Brokerage', userData?.brokerage || 'Unknown');
-      formBody.append('License_Number', licenseNumber);
-      formBody.append('Phone', phone);
-      formBody.append('Address', address + ', ' + city + ', ' + state + ' ' + zip);
-      formBody.append('Converted_On', readableTime);
+      var smsMsg = 'Agent Edge: PARTNER CONVERSION!\n' +
+        (userData?.full_name || 'Unknown') + ' / ' + (userData?.brokerage || '') + '\n' +
+        cleanEmail + '\n' +
+        'License: ' + licenseNumber;
 
-      await fetch('https://formspree.io/f/mgoyyney', {
+      await fetch('https://agent-edge-backend.vercel.app/api/send-sms', {
         method: 'POST',
-        body: formBody,
-        headers: { 'Accept': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: '+12063135883', message: smsMsg })
       });
     } catch (e) {
-      console.error('Formspree notification failed:', e);
+      console.error('SMS notification failed:', e);
     }
 
     // ===== STEP 5: Send welcome email to new partner =====

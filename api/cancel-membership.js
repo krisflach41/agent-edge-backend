@@ -79,20 +79,18 @@ export default async function handler(req, res) {
 
       const formBody = new URLSearchParams();
       formBody.append('_subject', 'CANCELLATION: ' + (userData?.full_name || cleanEmail));
-      formBody.append('Full_Name', userData?.full_name || 'Unknown');
-      formBody.append('Email', cleanEmail);
-      formBody.append('Brokerage', userData?.brokerage || 'Unknown');
-      formBody.append('Reason', reason);
-      formBody.append('Additional_Feedback', feedback || 'None provided');
-      formBody.append('Cancelled_On', readableTime);
+      var smsMsg = 'Agent Edge: CANCELLATION\n' +
+        (userData?.full_name || 'Unknown') + ' / ' + (userData?.brokerage || '') + '\n' +
+        cleanEmail + '\n' +
+        'Reason: ' + reason;
 
-      await fetch('https://formspree.io/f/mgoyyney', {
+      await fetch('https://agent-edge-backend.vercel.app/api/send-sms', {
         method: 'POST',
-        body: formBody,
-        headers: { 'Accept': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: '+12063135883', message: smsMsg })
       });
     } catch (e) {
-      console.error('Formspree notification failed:', e);
+      console.error('SMS notification failed:', e);
     }
 
     // ===== STEP 4: Send goodbye email =====

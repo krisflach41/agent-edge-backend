@@ -90,6 +90,18 @@ export default async function handler(req, res) {
       console.error('Activity tracking failed:', activityError);
     }
 
+    // SMS notification to Kristy
+    try {
+      await fetch('https://agent-edge-backend.vercel.app/api/send-sms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: '+12063135883',
+          message: 'Agent Edge: NEW ORDER\nFrom: ' + (name || email) + '\n' + orderSummary.join(', ')
+        })
+      });
+    } catch (smsErr) { console.error('SMS notify error:', smsErr); }
+
     return res.status(200).json({ 
       success: true, 
       orderId: orderId,

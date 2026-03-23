@@ -208,6 +208,19 @@ Keep it concise and actionable — this is a quick-reference cheat sheet, not a 
       });
 
       var insertData = await insertResp.json();
+
+      // SMS notification to Kristy
+      try {
+        await fetch('https://agent-edge-backend.vercel.app/api/send-sms', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: '+12063135883',
+            message: 'Agent Edge: SCENARIO REVIEW\nFrom: ' + (body.realtor_name || 'Unknown') + '\nTypes: ' + (body.scenario_types || []).join(', ')
+          })
+        });
+      } catch (smsErr) { console.error('SMS notify error:', smsErr); }
+
       return res.status(200).json({ success: true, id: insertData[0] ? insertData[0].id : null });
 
     } catch (err) {

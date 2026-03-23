@@ -70,6 +70,18 @@ export default async function handler(req, res) {
 
       await supaFetch(SUPABASE_URL, SUPABASE_KEY, '/rest/v1/credit_submissions', 'POST', submission);
 
+      // SMS notification to Kristy
+      try {
+        await fetch('https://agent-edge-backend.vercel.app/api/send-sms', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: '+12063135883',
+            message: 'Agent Edge: CREDIT ANALYSIS\n' + (b.client_name || 'Unknown client') + '\nFrom: ' + (b.realtor_name || 'Direct') + '\nScore: ' + (b.current_score || 'N/A')
+          })
+        });
+      } catch (smsErr) { console.error('SMS notify error:', smsErr); }
+
       return res.status(200).json({
         success: true,
         id: submissionId,

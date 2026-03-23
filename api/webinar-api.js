@@ -493,18 +493,16 @@ export default async function handler(req, res) {
         var resendKey = process.env.RESEND_API_KEY;
         if (resendKey) {
           var fullName2 = ((b.first_name || '') + ' ' + (b.last_name || '')).trim();
-          await fetch('https://api.resend.com/emails', {
+          await fetch('https://agent-edge-backend.vercel.app/api/send-sms', {
             method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + resendKey, 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              from: 'Agent Edge <kflach@kristyflach.com>',
-              to: ['kflach@prmg.net'],
-              subject: 'New Booking: ' + fullName2 + ' on ' + b.booking_date,
-              html: '<p>New consultation booked:</p><p><strong>' + fullName2 + '</strong><br>' + b.email + '<br>' + (b.phone || '') + '<br>' + b.booking_date + ' at ' + b.booking_time + ' EST</p>'
+              to: '+12063135883',
+              message: 'Agent Edge: NEW BOOKING\n' + fullName2 + '\n' + b.email + '\n' + (b.phone || '') + '\n' + b.booking_date + ' at ' + b.booking_time + ' EST'
             })
           });
         }
-      } catch (e) { console.error('Booking email notify error:', e); }
+      } catch (e) { console.error('Booking SMS notify error:', e); }
 
       return res.status(200).json({ success: true, booking: booking });
     }
