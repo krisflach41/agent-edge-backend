@@ -199,6 +199,51 @@ async function fetchTreasuryHistory(apiKey, seriesId, days) {
   return candles;
 }
 
+// ─── Supabase: Fetch today's snapshots ───────────────────────────
+async function fetchSnapshots() {
+  var SUPABASE_URL = process.env.SUPABASE_URL;
+  var SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
+  if (!SUPABASE_URL || !SUPABASE_KEY) return {};
+
+  // Get today and yesterday's date in ET
+  var now = new Date();
+  var etStr = now.toLocaleString('en-US', { timeZone: 'America/New_York' });
+  var etDate = new Date(etStr);
+  var today = etDate.getFullYear() + '-' +
+    String(etDate.getMonth() + 1).padStart(2, '0') + '-' +
+    String(etDate.getDate()).padStart(2, '0');
+
+  var yesterday = new Date(etDate);
+  yesterday.setDate(yesterday.getDate() - 1);
+  // Skip weekends
+  if (yesterday.getDay() === 0) yesterday.setDate(yesterday.getDate() - 2);
+  if (yesterday.getDay() === 6) yesterday.setDate(yesterday.getDate() - 1);
+  var yesterdayStr = yesterday.getFullYear() + '-' +
+    String(yesterday.getMonth() + 1).padStart(2, '0') + '-' +
+    String(yesterday.getDate()).padStart(2, '0');
+
+  try {
+    var url = SUPABASE_URL + '/rest/v1/market_snapshots?date=in.(' + today + ',' + yesterdayStr + ')&order=captured_at.asc';
+    var resp = await fetch(url, {
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+    });
+    if (!resp.ok) return {};
+    var rows = await resp.json();
+
+    // Group by symbol, then by time_label
+    var result = {};
+    rows.forEach(function(r) {
+      if (!result[r.symbol]) result[r.symbol] = {};
+      var key = r.date === today ? r.time_label : r.time_label + ' (Yesterday)';
+      result[r.symbol][key] = r.price;
+    });
+    return result;
+  } catch (e) {
+    console.error('Snapshot fetch error:', e.message);
+    return {};
+  }
+}
+
 // ─── Main Handler ────────────────────────────────────────────────
 module.exports = async (req, res) => {
   // CORS
@@ -236,6 +281,7 @@ module.exports = async (req, res) => {
 
       // Fetch everything in parallel
       var treasuryPromise = fetchTreasuryYields(apiKey);
+      var snapshotPromise = fetchSnapshots();
 
       var umbsPromises = {};
       var yahooKeys = Object.keys(YAHOO_TICKERS);
@@ -246,6 +292,7 @@ module.exports = async (req, res) => {
       });
 
       var treasuries = await treasuryPromise;
+      var snapshots = await snapshotPromise;
 
       var umbs = {};
       for (var k = 0; k < yahooKeys.length; k++) {
@@ -261,6 +308,7 @@ module.exports = async (req, res) => {
           'UMBS_6': umbs['UMBS_6']
         },
         spy: umbs['SPY'],
+        snapshots: snapshots,
         fetchedAt: new Date().toISOString(),
         source: {
           treasuries: 'FRED (Federal Reserve Bank of St. Louis)',
