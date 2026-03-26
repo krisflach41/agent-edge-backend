@@ -1,121 +1,103 @@
-// /api/test-finra.js — V5: Fetch FINRA app bundle + find real data API
-// ?step=1  Fetch the Angular app JS, extract API endpoints
-// ?step=2  Hit the discovered API endpoint for TBA data
+// /api/test-finra.js — V6: Try discovered FINRA endpoints
+// ?step=1  FINRA search and lookup APIs
+// ?step=2  Try FIST service + DPLR search API for TBA data
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   var step = req.query.step || '1';
-  var ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  var ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+  var results = [];
 
   if (step === '1') {
-    // Fetch the Angular app bundle and extract API URL patterns
-    var jsUrl = 'https://ddwa-cdn-us-east-1.ddwa.finra.org/app/dynamic-reporting/app-dynamic-reporting.js';
-    try {
-      var jsRes = await fetch(jsUrl, { headers: { 'User-Agent': ua } });
-      var jsText = await jsRes.text();
+    // Try the search/lookup APIs from ctl-common.js
+    var urls = [
+      // DPLR search API - found in the JS
+      'https://search-api-ext.dplr.finra.org/search?query=FNCL+5.5+30YR&limit=5',
+      // Lookup API patterns
+      'https://search-api-ext.dplr.finra.org/di-lookup/api/v1/lookup?lookupSources=FIRMS+BOIAResults=10&hl=true&query=FNCL',
+      // FIST endpoints
+      'https://fist.finra.org',
+      // Direct securitized products market aggregate from FINRA
+      'https://www.finra.org/finra-data/api/securitizedProducts/marketAggregates',
+      // Bond market activity endpoint
+      'https://www.finra.org/finra-data/api/bondMarketActivity'
+    ];
 
-      // Search for API endpoint patterns
-      var endpoints = [];
-      var patterns = [
-        /["'](https?:\/\/[^"'\s]*ddwa[^"'\s]*)["']/gi,
-        /["'](https?:\/\/[^"'\s]*finra[^"'\s]*api[^"'\s]*)["']/gi,
-        /["'](\/DDWAService[^"'\s]*)["']/gi,
-        /["'](\/api\/[^"'\s]+)["']/gi,
-        /serviceUrl['":\s]+["']([^"']+)["']/gi,
-        /apiUrl['":\s]+["']([^"']+)["']/gi,
-        /baseUrl['":\s]+["']([^"']+)["']/gi,
-        /["'](https?:\/\/services[^"'\s]*)["']/gi
-      ];
-
-      patterns.forEach(function(pat) {
-        var m;
-        while ((m = pat.exec(jsText)) !== null) {
-          if (endpoints.indexOf(m[1]) === -1) endpoints.push(m[1]);
-        }
-      });
-
-      // Also grab any URL that contains 'tba' or 'trade' or 'bond'
-      var tbaPat = /["'](https?:\/\/[^"'\s]*(?:tba|trade|bond|securitized)[^"'\s]*)["']/gi;
-      var tbaUrls = [];
-      var tm;
-      while ((tm = tbaPat.exec(jsText)) !== null) {
-        if (tbaUrls.indexOf(tm[1]) === -1) tbaUrls.push(tm[1]);
+    for (var i = 0; i < urls.length; i++) {
+      try {
+        var r = await fetch(urls[i], {
+          headers: { 'User-Agent': ua, 'Accept': 'application/json,text/html,*/*', 'Referer': 'https://www.finra.org/' },
+          redirect: 'follow'
+        });
+        var text = await r.text();
+        results.push({ url: urls[i], status: r.status, type: r.headers.get('content-type'), body: text.substring(0, 800) });
+      } catch (e) {
+        results.push({ url: urls[i], error: e.message });
       }
-
-      return res.status(200).json({
-        step: 1,
-        jsUrl: jsUrl,
-        jsStatus: jsRes.status,
-        jsLength: jsText.length,
-        apiEndpoints: endpoints.slice(0, 30),
-        tbaRelatedUrls: tbaUrls.slice(0, 20),
-        jsPreview: jsText.substring(0, 500)
-      });
-    } catch (e) {
-      return res.status(200).json({ step: 1, error: e.message });
     }
+    return res.status(200).json({ step: 1, results: results });
   }
 
   if (step === '2') {
-    // Also fetch ctl-common.js for base URL config
-    var commonUrl = 'https://ddwa-cdn-us-east-1.ddwa.finra.org/ctl-common/ctl-common.js';
-    try {
-      var cRes = await fetch(commonUrl, { headers: { 'User-Agent': ua } });
-      var cText = await cRes.text();
-
-      var urls = [];
-      var pat = /["'](https?:\/\/[^"'\s]+)["']/gi;
-      var m;
-      while ((m = pat.exec(cText)) !== null) {
-        if (urls.indexOf(m[1]) === -1 && m[1].indexOf('finra') !== -1) urls.push(m[1]);
-      }
-
-      // Look for service/api config
-      var configPat = /(?:service|api|base|endpoint)(?:Url|URL|Path|Base)['":\s]+["']([^"']+)["']/gi;
-      var configs = [];
-      while ((m = configPat.exec(cText)) !== null) {
-        if (configs.indexOf(m[1]) === -1) configs.push(m[1]);
-      }
-
-      return res.status(200).json({
-        step: 2,
-        jsUrl: commonUrl,
-        jsStatus: cRes.status,
-        jsLength: cText.length,
-        finraUrls: urls.slice(0, 30),
-        serviceConfigs: configs.slice(0, 20),
-        jsPreview: cText.substring(0, 500)
-      });
-    } catch (e) {
-      return res.status(200).json({ step: 2, error: e.message });
-    }
-  }
-
-  if (step === '3') {
-    // Try hitting the DDWAService API directly
-    var apiUrls = [
-      'https://services-dyp.ddwa.finra.org/DDWAService/api/1/app/BondCenter/filterResults',
-      'https://services-dyp.ddwa.finra.org/DDWAService/api/1/app/BondCenter/TBATradeActivity',
-      'https://services-dyp.ddwa.finra.org/DDWAService/api/1/app/dynamic-reporting/data'
+    // Try the securitized products aggregate data page which is public
+    // and the bond market activity page - these have structured data
+    var urls2 = [
+      // SP Market aggregates - public page with end-of-day data
+      'https://www.finra.org/finra-data/fixed-income/sp-market-aggregates',
+      // Try fetching the page and look for embedded JSON data
+      'https://www.finra.org/finra-data/fixed-income/tba',
+      // TBA overview/data page
+      'https://www.finra.org/finra-data/fixed-income/tba/overview'
     ];
 
-    var results = [];
-    for (var i = 0; i < apiUrls.length; i++) {
+    for (var j = 0; j < urls2.length; j++) {
       try {
-        // Try GET first
-        var r = await fetch(apiUrls[i], {
-          headers: { 'User-Agent': ua, 'Accept': 'application/json', 'Origin': 'https://www.finra.org', 'Referer': 'https://www.finra.org/finra-data/fixed-income/tba/trade' }
+        var r2 = await fetch(urls2[j], {
+          headers: { 'User-Agent': ua, 'Accept': 'text/html,*/*' },
+          redirect: 'follow'
         });
-        var text = await r.text();
-        results.push({ url: apiUrls[i], method: 'GET', status: r.status, body: text.substring(0, 500) });
+        var html = await r2.text();
+
+        // Look for embedded JSON data or drupalSettings
+        var jsonData = [];
+        var drupalPat = /drupalSettings\s*=\s*(\{[^;]{0,2000})/g;
+        var dm;
+        while ((dm = drupalPat.exec(html)) !== null) {
+          jsonData.push(dm[1].substring(0, 500));
+        }
+
+        // Look for any data-config or data-api attributes
+        var configPat = /data-(?:config|api|endpoint|url|src)=["']([^"']+)["']/gi;
+        var configs = [];
+        var cm;
+        while ((cm = configPat.exec(html)) !== null) {
+          configs.push(cm[1]);
+        }
+
+        // Look for inline JSON arrays that might be trade data
+        var jsonArrayPat = /\[{"(?:date|tradeDate|coupon|price|high|low|last)[^}]{0,200}}/g;
+        var inlineData = [];
+        var jm;
+        while ((jm = jsonArrayPat.exec(html)) !== null) {
+          inlineData.push(jm[0].substring(0, 300));
+        }
+
+        results.push({
+          url: urls2[j],
+          status: r2.status,
+          htmlLength: html.length,
+          drupalSettings: jsonData,
+          dataConfigs: configs.slice(0, 10),
+          inlineJsonData: inlineData.slice(0, 5)
+        });
       } catch (e) {
-        results.push({ url: apiUrls[i], method: 'GET', error: e.message });
+        results.push({ url: urls2[j], error: e.message });
       }
     }
-    return res.status(200).json({ step: 3, results: results });
+    return res.status(200).json({ step: 2, results: results });
   }
 
-  return res.status(200).json({ error: 'Use ?step=1, ?step=2, or ?step=3' });
+  return res.status(200).json({ error: 'Use ?step=1 or ?step=2' });
 };
