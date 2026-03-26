@@ -38,6 +38,10 @@
       "memory": 1024,
       "maxDuration": 45
     },
+    "api/markets.js": {
+      "memory": 1024,
+      "maxDuration": 30
+    },
     "api/content-calendar.js": {
       "memory": 1024,
       "maxDuration": 300
