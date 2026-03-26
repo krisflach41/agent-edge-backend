@@ -1,77 +1,138 @@
-// /api/test-finra.js — V3 SLIM: auth + discover trace dataset
+// /api/test-finra.js — V4: Probe FINRA Bond Center internal data endpoints
+// The TBA Trade Activity page loads data via XHR from these known endpoints
 // Hit: https://agent-edge-backend.vercel.app/api/test-finra
-// Add ?step=2 after step 1 works
+// ?step=1  Probe known FINRA data center endpoints for TBA
+// ?step=2  Try gateway endpoint with FNCL 5.5 filter
+// ?step=3  Try direct scrape of the trade activity page
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   var step = req.query.step || '1';
-  var clientId = process.env.FINRA_CLIENT_ID;
-  var clientSecret = process.env.FINRA_CLIENT_SECRET;
-
-  if (!clientId || !clientSecret) {
-    return res.status(200).json({ error: 'Missing FINRA env vars' });
-  }
-
-  // Auth
-  var authRes = await fetch(
-    'https://ews.fip.finra.org/fip/rest/ews/oauth2/access_token?grant_type=client_credentials',
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Basic ' + Buffer.from(clientId + ':' + clientSecret).toString('base64'),
-        'Content-Type': 'application/x-www-form-urlencoded'
-      }
-    }
-  );
-  var authData = await authRes.json();
-  if (!authData.access_token) return res.status(200).json({ error: 'Auth failed', authData: authData });
-
-  var token = authData.access_token;
-  var h = { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json', 'Content-Type': 'application/json' };
+  var ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  var results = { step: step, timestamp: new Date().toISOString(), probes: [] };
 
   if (step === '1') {
-    // Just get metadata for the 'trace' dataset
-    var m1 = await fetch('https://api.finra.org/metadata/group/fixedIncomeMarket/name/trace', { headers: h });
-    var m1d = await m1.text();
-    return res.status(200).json({
-      step: 1,
-      trace_metadata_status: m1.status,
-      trace_metadata: m1d.substring(0, 3000),
-      next: 'If 404, try ?step=2 to probe other names'
-    });
+    // Probe known FINRA data center API patterns
+    var urls = [
+      // Pattern 1: New FINRA data center API (used by the React frontend)
+      'https://services-dyp.ddwa.finra.org/DDWAService/api/1/app/BondCenter/TBATradeActivity',
+      // Pattern 2: Gateway API
+      'https://gateway.finra.org/api/fixedincome/tba/trade',
+      // Pattern 3: Direct FINRA data endpoint
+      'https://www.finra.org/sites/default/files/data/tba-trade-activity.json',
+      // Pattern 4: FINRA fixed income data API  
+      'https://fixedincome.finra.org/api/tba/trade',
+      // Pattern 5: Older bond center pattern via Morningstar  
+      'https://finra-markets.morningstar.com/BondCenter/TBATradeData.jsp?productType=TBA&dateRange=10Y'
+    ];
+
+    for (var i = 0; i < urls.length; i++) {
+      try {
+        var r = await fetch(urls[i], {
+          headers: { 'User-Agent': ua, 'Accept': 'application/json, text/html, */*' },
+          redirect: 'follow'
+        });
+        var text = await r.text();
+        results.probes.push({
+          url: urls[i],
+          status: r.status,
+          contentType: r.headers.get('content-type') || 'unknown',
+          bodyPreview: text.substring(0, 500),
+          redirected: r.redirected,
+          finalUrl: r.url
+        });
+      } catch (e) {
+        results.probes.push({ url: urls[i], error: e.message });
+      }
+    }
+    return res.status(200).json(results);
   }
 
   if (step === '2') {
-    // Probe 4 likely dataset names with metadata
-    var names = ['securitizedProductCappedVolume', 'treasuryDailyAggregates', 'agencyDebtMarketBreadth', 'corporateDebtMarketBreadth'];
-    var out = {};
-    for (var i = 0; i < names.length; i++) {
-      var r = await fetch('https://api.finra.org/metadata/group/fixedIncomeMarket/name/' + names[i], { headers: h });
-      var txt = await r.text();
-      var parsed; try { parsed = JSON.parse(txt); } catch(e) { parsed = txt.substring(0, 300); }
-      out[names[i]] = { status: r.status, fields: parsed.fields ? parsed.fields.map(function(f){return f.name;}) : parsed };
+    // Try the FINRA fixed income search/data patterns
+    var urls2 = [
+      // The new FINRA data center uses this pattern
+      'https://www.finra.org/finra-data/api/fixedIncome/tba/trade?agencyType=FNCL&couponRate=5.5&maturityTerm=30&limit=20',
+      'https://www.finra.org/api/fixedIncome/tba/trade?agencyType=FNCL&couponRate=5.5',
+      // Try the Drupal JSON API pattern (FINRA site is Drupal)
+      'https://www.finra.org/jsonapi/node/fixed_income_data',
+      // Try GraphQL pattern
+      'https://www.finra.org/graphql'
+    ];
+
+    for (var j = 0; j < urls2.length; j++) {
+      try {
+        var r2 = await fetch(urls2[j], {
+          headers: { 'User-Agent': ua, 'Accept': 'application/json, */*' },
+          redirect: 'follow'
+        });
+        var text2 = await r2.text();
+        results.probes.push({
+          url: urls2[j],
+          status: r2.status,
+          contentType: r2.headers.get('content-type') || 'unknown',
+          bodyPreview: text2.substring(0, 500)
+        });
+      } catch (e) {
+        results.probes.push({ url: urls2[j], error: e.message });
+      }
     }
-    return res.status(200).json({ step: 2, datasets: out, next: '?step=3 to query a working dataset' });
+    return res.status(200).json(results);
   }
 
   if (step === '3') {
-    // Query securitizedProductCappedVolume for TBA data
-    var ds = req.query.ds || 'securitizedProductCappedVolume';
-    var r = await fetch('https://api.finra.org/data/group/fixedIncomeMarket/name/' + ds, {
-      method: 'POST', headers: h,
-      body: JSON.stringify({ limit: 10 })
-    });
-    var d = await r.text();
-    var parsed; try { parsed = JSON.parse(d); } catch(e) { parsed = d.substring(0, 3000); }
-    return res.status(200).json({
-      step: 3,
-      dataset: ds,
-      status: r.status,
-      recordCount: Array.isArray(parsed) ? parsed.length : 'N/A',
-      data: Array.isArray(parsed) ? parsed.slice(0, 5) : parsed
-    });
+    // Fetch the actual TBA trade page and look for data URLs in the HTML/JS
+    try {
+      var pageRes = await fetch('https://www.finra.org/finra-data/fixed-income/tba/trade', {
+        headers: { 'User-Agent': ua, 'Accept': 'text/html,*/*' }
+      });
+      var html = await pageRes.text();
+      
+      // Look for API endpoint patterns in the page source
+      var apiPatterns = [];
+      var patterns = [
+        /["'](https?:\/\/[^"'\s]*(?:api|data|service|endpoint)[^"'\s]*tba[^"'\s]*)["']/gi,
+        /["'](https?:\/\/[^"'\s]*finra[^"'\s]*(?:trade|bond|fixed)[^"'\s]*)["']/gi,
+        /["'](\/api\/[^"'\s]+)["']/gi,
+        /["'](\/finra-data\/api[^"'\s]+)["']/gi,
+        /fetch\(["']([^"']+)["']/gi,
+        /["'](https?:\/\/[^"'\s]*ddwa[^"'\s]*)["']/gi,
+        /["'](https?:\/\/[^"'\s]*gateway[^"'\s]*fixed[^"'\s]*)["']/gi
+      ];
+      
+      patterns.forEach(function(pat) {
+        var m;
+        while ((m = pat.exec(html)) !== null) {
+          if (apiPatterns.indexOf(m[1]) === -1) apiPatterns.push(m[1]);
+        }
+      });
+
+      // Also look for script src URLs that might contain the app bundle
+      var scriptUrls = [];
+      var scriptPat = /<script[^>]+src=["']([^"']+)["'][^>]*>/gi;
+      var sm;
+      while ((sm = scriptPat.exec(html)) !== null) {
+        if (sm[1].indexOf('chunk') !== -1 || sm[1].indexOf('main') !== -1 || sm[1].indexOf('app') !== -1 || sm[1].indexOf('bundle') !== -1) {
+          scriptUrls.push(sm[1]);
+        }
+      }
+
+      results.probes.push({
+        url: 'https://www.finra.org/finra-data/fixed-income/tba/trade',
+        status: pageRes.status,
+        htmlLength: html.length,
+        apiEndpointsFound: apiPatterns.slice(0, 20),
+        appScripts: scriptUrls.slice(0, 10),
+        containsReact: html.indexOf('react') !== -1 || html.indexOf('React') !== -1,
+        containsAngular: html.indexOf('angular') !== -1 || html.indexOf('ng-') !== -1,
+        containsDrupal: html.indexOf('drupal') !== -1 || html.indexOf('Drupal') !== -1
+      });
+    } catch (e) {
+      results.probes.push({ error: e.message });
+    }
+    return res.status(200).json(results);
   }
 
   return res.status(200).json({ error: 'Use ?step=1, ?step=2, or ?step=3' });
