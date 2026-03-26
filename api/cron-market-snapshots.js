@@ -1,5 +1,5 @@
 // /api/cron-market-snapshots.js
-// Runs at 9:30, 10:30, 11:00, 11:30 ET to capture intraday MBS price snapshots
+// Captures market price snapshots at 9am, 12pm, 2pm, 5pm ET
 // Stores in Supabase table: market_snapshots
 
 const YAHOO_TICKERS = {
@@ -10,7 +10,7 @@ const YAHOO_TICKERS = {
 };
 
 const FRED_BASE = 'https://api.stlouisfed.org/fred/series/observations';
-const TREASURY_SERIES = { '1Y':'DGS1', '2Y':'DGS2', '5Y':'DGS5', '7Y':'DGS7', '10Y':'DGS10' };
+const TREASURY_SERIES = { '10Y': 'DGS10' };
 
 async function fetchYahooPrice(symbol) {
   var url = 'https://query1.finance.yahoo.com/v8/finance/chart/' +
@@ -25,8 +25,7 @@ async function fetchYahooPrice(symbol) {
   var meta = result.meta || {};
   return {
     price: meta.regularMarketPrice || null,
-    previousClose: meta.chartPreviousClose || meta.previousClose || null,
-    open: null
+    previousClose: meta.chartPreviousClose || meta.previousClose || null
   };
 }
 
@@ -44,25 +43,6 @@ async function fetchTreasuryYield(apiKey, seriesId) {
   return null;
 }
 
-async function supaFetch(url, key, path, method, body) {
-  var headers = { 'apikey': key, 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' };
-  var opts = { method: method, headers: headers };
-  if (body) opts.body = JSON.stringify(body);
-  var resp = await fetch(url + path, opts);
-  if (!resp.ok) {
-    var errText = await resp.text();
-    throw new Error(method + ' failed: ' + resp.status + ' ' + errText);
-  }
-  return resp;
-}
-
-async function supaGet(url, key, path) {
-  var resp = await fetch(url + path, {
-    headers: { 'apikey': key, 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' }
-  });
-  return await resp.json();
-}
-
 module.exports = async (req, res) => {
   var SUPABASE_URL = process.env.SUPABASE_URL;
   var SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -76,23 +56,21 @@ module.exports = async (req, res) => {
     var hour = etTime.getHours();
     var min = etTime.getMinutes();
 
-    // Determine snapshot label based on current ET time
+    // Determine snapshot label
     var label = '';
-    if (hour === 9 && min >= 25 && min <= 35) label = '9:30 ET';
-    else if (hour === 10 && min >= 25 && min <= 35) label = '10:30 ET';
-    else if (hour === 11 && min >= 0 && min <= 5) label = '11:00 ET';
-    else if (hour === 11 && min >= 25 && min <= 35) label = '11:30 ET';
-    else if (hour === 16 && min >= 0 && min <= 10) label = 'close';
+    if (hour === 9 && min <= 10) label = 'Open';
+    else if (hour === 12 && min <= 10) label = 'Mid-Day';
+    else if (hour === 14 && min <= 10) label = 'Afternoon';
+    else if ((hour === 16 && min >= 55) || (hour === 17 && min <= 5)) label = 'Close';
     else label = hour + ':' + (min < 10 ? '0' : '') + min + ' ET';
 
     var dateStr = etTime.getFullYear() + '-' +
       String(etTime.getMonth() + 1).padStart(2, '0') + '-' +
       String(etTime.getDate()).padStart(2, '0');
 
-    // Fetch all prices
     var snapshots = [];
 
-    // Yahoo tickers
+    // Yahoo tickers (UMBS coupons + SPY)
     var yahooKeys = Object.keys(YAHOO_TICKERS);
     for (var i = 0; i < yahooKeys.length; i++) {
       try {
@@ -132,31 +110,21 @@ module.exports = async (req, res) => {
 
     // Store in Supabase
     if (snapshots.length > 0) {
-      await supaFetch(SUPABASE_URL, SUPABASE_KEY,
-        '/rest/v1/market_snapshots',
-        'POST', snapshots
-      );
+      var storeRes = await fetch(SUPABASE_URL + '/rest/v1/market_snapshots', {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_KEY,
+          'Authorization': 'Bearer ' + SUPABASE_KEY,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal'
+        },
+        body: JSON.stringify(snapshots)
+      });
+      if (!storeRes.ok) {
+        var errText = await storeRes.text();
+        console.error('Supabase store error:', storeRes.status, errText);
+      }
     }
-
-    // Also store today's snapshot summary for quick access
-    var summary = {};
-    snapshots.forEach(function(s) { summary[s.symbol] = s.price; });
-
-    // Upsert today's row in market_daily
-    await supaFetch(SUPABASE_URL, SUPABASE_KEY,
-      '/rest/v1/market_daily?on_conflict=date,symbol',
-      'POST',
-      snapshots.map(function(s) {
-        var obj = { date: dateStr, symbol: s.symbol };
-        obj[label.replace(/[: ]/g, '_').toLowerCase()] = s.price;
-        obj['latest_price'] = s.price;
-        obj['previous_close'] = s.previous_close;
-        obj['updated_at'] = now.toISOString();
-        return obj;
-      })
-    ).catch(function() {
-      // market_daily table might not exist yet, that's ok
-    });
 
     return res.status(200).json({
       success: true,
