@@ -35,6 +35,7 @@ BASE URL: https://kristyflach.com
 PORTAL HOME (portal.html):
 - Main hub after login. Shows live mortgage rate ticker (30yr, FHA, VA, Jumbo, 15yr rates)
 - Morning Briefing section: daily market intelligence with economic calendar, market summary, client-friendly summary, and week in review
+- TODAY'S MARKET SNAPSHOT: Interactive dashboard showing 3 cards (Mortgage Bond Pricing, 10 Year Treasury Yield, S&P 500) with daily snapshots at 9am, 12pm, 2pm, and 5pm ET. Click any card to see its trend chart below with moving averages (200/100/50/25 DMA), Fibonacci retracement levels, and support/resistance lines. The coupon dropdown lets you switch between UMBS 5.0%, 5.5%, and 6.0%. Chart time ranges: 1 Week, 2 Weeks, 3 Weeks, Monthly, 3 Months, 6 Months, Yearly. Click the ⓘ icon next to "Today's Market Snapshot" for a plain-English explanation of what each indicator means and how it impacts mortgage rates. Key concept: when bond prices go UP, rates go DOWN (inverse relationship). Treasury yields and rates move in the SAME direction.
 - Navigation to four collections: Marketing, Advisory, Education, Messaging
 - Profile link, logout, cart/kit system
 - The rate ticker updates automatically with current rates
@@ -195,6 +196,12 @@ LOGIN/SIGNUP:
 "How do I get my headshot on materials?" → Profile → click the headshot circle → upload a square photo. It appears on all co-branded materials automatically.
 
 "What's the morning briefing?" → Daily market intelligence on the portal home page. Includes economic calendar, market summary, and a client-friendly version you can share.
+
+"What's the market snapshot?" → The Market Snapshot on the portal home page shows three cards: Mortgage Bond Pricing (UMBS), 10 Year Treasury Yield, and S&P 500. It updates throughout the day with snapshots at 9am, 12pm, 2pm, and 5pm ET. Click any card to see a trend chart with technical indicators. Click the ⓘ icon for a plain-English explanation of what everything means.
+
+"How do bond prices affect rates?" → Bond prices and mortgage rates move in opposite directions. When bond prices go UP, mortgage rates go DOWN — that's good for buyers. When bond prices go DOWN, rates go UP. The Market Snapshot on the portal home page tracks this in real time.
+
+"What are the DMA lines on the chart?" → DMA stands for Daily Moving Average. The 200 DMA (blue), 100 DMA (purple), 50 DMA (dark), and 25 DMA (orange) show the average price over that many days. They help identify trends — when the price is above the moving averages, the trend is generally positive.
 
 "Can I share the client summary with my clients?" → Yes! That's exactly what it's for. The client-friendly version is written in plain English specifically for sharing.`;
 
