@@ -49,7 +49,7 @@ module.exports = async (req, res) => {
       if (!SUPABASE_URL || !SUPABASE_KEY) return res.status(500).json({ success: false, message: 'Supabase not configured' });
 
       var d = req.body.data;
-      if (!d || !d.price) return res.status(400).json({ success: false, message: 'price required' });
+      if (!d || (!d.latest_price && (!d.snapshots || Object.keys(d.snapshots).length === 0))) return res.status(400).json({ success: false, message: 'Enter at least one price' });
 
       try {
         // Upsert into mbs_override table (single row per date)
