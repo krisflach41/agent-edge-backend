@@ -582,14 +582,27 @@ export default async function handler(req, res) {
     if (action === 'list_calendar_events') {
       var ceStart = req.body.start_date || new Date().toISOString().split('T')[0];
       var ceEnd = req.body.end_date || '2099-12-31';
-      const { data, error } = await supabase
+      // Get non-recurring events in range
+      const { data: rangeEvents, error: e1 } = await supabase
         .from('ae_calendar_events')
         .select('*')
         .gte('event_date', ceStart)
         .lte('event_date', ceEnd)
+        .or('repeat_type.is.null,repeat_type.eq.none')
         .order('event_date', { ascending: true });
-      if (error) return res.status(500).json({ success: false, message: error.message });
-      return res.status(200).json({ success: true, events: data || [] });
+      // Get all recurring events (regardless of date range — frontend generates occurrences)
+      const { data: recurEvents, error: e2 } = await supabase
+        .from('ae_calendar_events')
+        .select('*')
+        .not('repeat_type', 'is', null)
+        .neq('repeat_type', 'none')
+        .order('event_date', { ascending: true });
+      if (e1) return res.status(500).json({ success: false, message: e1.message });
+      var allEvents = (rangeEvents || []).concat(recurEvents || []);
+      // Deduplicate by id
+      var seen = {};
+      allEvents = allEvents.filter(function(e) { if (seen[e.id]) return false; seen[e.id] = true; return true; });
+      return res.status(200).json({ success: true, events: allEvents });
     }
 
     if (action === 'create_calendar_event') {
@@ -608,6 +621,8 @@ export default async function handler(req, res) {
           category: ce.category,
           notes: ce.notes || '',
           reminder: ce.reminder || false,
+          repeat_type: ce.repeat_type || 'none',
+          repeat_end: ce.repeat_end || null,
           created_at: new Date().toISOString()
         })
         .select()
@@ -628,6 +643,8 @@ export default async function handler(req, res) {
       if (ue.category !== undefined) ueFields.category = ue.category;
       if (ue.notes !== undefined) ueFields.notes = ue.notes;
       if (ue.reminder !== undefined) ueFields.reminder = ue.reminder;
+      if (ue.repeat_type !== undefined) ueFields.repeat_type = ue.repeat_type;
+      if (ue.repeat_end !== undefined) ueFields.repeat_end = ue.repeat_end;
 
       const { data, error } = await supabase
         .from('ae_calendar_events')
@@ -637,6 +654,37 @@ export default async function handler(req, res) {
         .single();
       if (error) return res.status(500).json({ success: false, message: error.message });
       return res.status(200).json({ success: true, event: data });
+    }
+
+    // ===== CALENDAR SMS REMINDER =====
+    if (action === 'send_calendar_sms') {
+      var smsTitle = req.body.title || 'Event';
+      var smsTime = req.body.time || '';
+      var smsPhone = req.body.phone || process.env.KRISTY_PHONE || '';
+      if (!smsPhone) return res.status(200).json({ success: false, message: 'No phone configured' });
+
+      try {
+        var telnyxKey = process.env.TELNYX_API_KEY;
+        var telnyxFrom = process.env.TELNYX_FROM_NUMBER;
+        if (!telnyxKey || !telnyxFrom) return res.status(200).json({ success: false, message: 'Telnyx not configured' });
+
+        var cleanTo = smsPhone.replace(/[^0-9+]/g, '');
+        if (!cleanTo.startsWith('+')) {
+          if (cleanTo.startsWith('1') && cleanTo.length === 11) cleanTo = '+' + cleanTo;
+          else if (cleanTo.length === 10) cleanTo = '+1' + cleanTo;
+        }
+
+        var smsText = 'Reminder: ' + smsTitle + (smsTime ? ' at ' + smsTime : '') + ' — in 15 minutes';
+        var smsResp = await fetch('https://api.telnyx.com/v2/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + telnyxKey },
+          body: JSON.stringify({ from: telnyxFrom, to: cleanTo, text: smsText })
+        });
+        var smsData = await smsResp.json();
+        return res.status(200).json({ success: smsResp.ok, sms_id: smsData.data?.id || '' });
+      } catch (smsErr) {
+        return res.status(200).json({ success: false, message: smsErr.message });
+      }
     }
 
     if (action === 'delete_calendar_event') {
