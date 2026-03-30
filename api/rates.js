@@ -49,11 +49,18 @@ module.exports = async (req, res) => {
       if (!SUPABASE_URL || !SUPABASE_KEY) return res.status(500).json({ success: false, message: 'Supabase not configured' });
 
       var d = req.body.data;
-      if (!d || !d.price) return res.status(400).json({ success: false, message: 'price required' });
+      if (!d || (!d.latest_price && (!d.snapshots || Object.keys(d.snapshots).length === 0))) return res.status(400).json({ success: false, message: 'Enter at least one price' });
 
       try {
-        // Upsert into mbs_override table (single row, keyed by date)
-        var row = { date: d.date, price: d.price, bps: d.bps || 0, previous_close: d.previous_close || 0, updated_at: d.updated_at || new Date().toISOString() };
+        // Upsert into mbs_override table (single row per date)
+        var row = {
+          date: d.date,
+          snapshots: d.snapshots || {},
+          previous_close: d.previous_close || 0,
+          latest_price: d.latest_price || 0,
+          latest_bps: d.latest_bps || 0,
+          updated_at: d.updated_at || new Date().toISOString()
+        };
 
         // Check if today's row exists
         var checkResp = await fetch(SUPABASE_URL + '/rest/v1/mbs_override?date=eq.' + d.date, {
@@ -62,6 +69,11 @@ module.exports = async (req, res) => {
         var existing = await checkResp.json();
 
         if (existing && existing.length > 0) {
+          // Merge new snapshots with existing ones
+          var merged = existing[0].snapshots || {};
+          Object.keys(d.snapshots || {}).forEach(function(k) { merged[k] = d.snapshots[k]; });
+          row.snapshots = merged;
+
           await fetch(SUPABASE_URL + '/rest/v1/mbs_override?date=eq.' + d.date, {
             method: 'PATCH',
             headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
