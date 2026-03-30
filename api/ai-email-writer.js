@@ -86,7 +86,17 @@ export default async function handler(req, res) {
         body_html: parsed.body_html || ''
       });
     } catch (parseErr) {
-      // If AI didn't return valid JSON, wrap as HTML
+      // If AI returned something that looks like JSON but didn't parse, try to extract body_html
+      var bodyMatch = text.match(/"body_html"\s*:\s*"([\s\S]*?)"\s*\}?\s*$/);
+      var subjectMatch = text.match(/"subject"\s*:\s*"(.*?)"/);
+      if (bodyMatch && bodyMatch[1]) {
+        return res.status(200).json({
+          success: true,
+          subject: subjectMatch ? subjectMatch[1] : '',
+          body_html: bodyMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+        });
+      }
+      // If AI didn't return anything JSON-like, wrap as HTML
       return res.status(200).json({
         success: true,
         subject: '',
