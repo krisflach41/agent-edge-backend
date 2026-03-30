@@ -730,6 +730,21 @@ async function processDrips(res) {
         var subject = step.subject_override || step.ae_email_templates?.subject || 'Message from your Loan Officer';
         var bodyHtml = step.body_override || step.ae_email_templates?.body_html || '';
 
+        // Safety: if body contains raw JSON from AI writer, extract just the body_html
+        if (bodyHtml && bodyHtml.trim().startsWith('{') && bodyHtml.includes('"body_html"')) {
+          try {
+            var parsed = JSON.parse(bodyHtml);
+            if (parsed.body_html) bodyHtml = parsed.body_html;
+            if (parsed.subject && !step.subject_override) subject = parsed.subject;
+          } catch (e) {
+            // If it starts with JSON but isn't valid, try to extract body_html with regex
+            var match = bodyHtml.match(/"body_html"\s*:\s*"([\s\S]*?)"\s*\}?\s*$/);
+            if (match && match[1]) {
+              bodyHtml = match[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+            }
+          }
+        }
+
         if (!bodyHtml) continue;
 
         // Personalize
