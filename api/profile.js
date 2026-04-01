@@ -89,6 +89,29 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true, message: 'Password updated' });
       }
 
+      // --- ADMIN PASSWORD RESET (from Mission Control Settings) ---
+      if (action === 'adminResetPassword') {
+        var resetEmail = (body.email || '').toLowerCase().trim();
+        if (!resetEmail || !body.newPassword) {
+          return res.status(400).json({ success: false, message: 'Email and new password required' });
+        }
+
+        const { data: resetUser } = await supabase
+          .from('users')
+          .select('email')
+          .eq('email', resetEmail)
+          .single();
+
+        if (!resetUser) return res.status(404).json({ success: false, message: 'User not found' });
+
+        if (body.newPassword.length < 6) {
+          return res.status(400).json({ success: false, message: 'Password must be at least 6 characters' });
+        }
+
+        await supabase.from('users').update({ password: body.newPassword }).eq('email', resetEmail);
+        return res.status(200).json({ success: true, message: 'Password reset successfully' });
+      }
+
       // --- PROFILE UPDATE ---
       var cleanEmail = (body.email || '').toLowerCase().trim();
       if (!cleanEmail) return res.status(400).json({ success: false, message: 'Email required' });
