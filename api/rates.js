@@ -133,22 +133,33 @@ module.exports = async (req, res) => {
       rows.forEach(function(row) {
         var snaps = row.snapshots || {};
         var prices = [];
-        var openPrice = null, closePrice = null;
+        var closePrice = null;
         var order = ['open', 'midday', 'afternoon', 'close'];
         order.forEach(function(slot) {
           if (snaps[slot] && snaps[slot].price) {
             prices.push(snaps[slot].price);
-            if (!openPrice) openPrice = snaps[slot].price;
             closePrice = snaps[slot].price;
           }
         });
-        // Specifically use open slot as open if available
-        if (snaps.open && snaps.open.price) openPrice = snaps.open.price;
 
-        if (prices.length > 0) {
+        // The candle open is always the previous close (after-hours final)
+        // This is the true anchor point for the day's movement
+        var candleOpen = row.previous_close || null;
+
+        // If no previous_close stored, fall back to the first snapshot
+        if (!candleOpen && prices.length > 0) {
+          candleOpen = prices[0];
+        }
+
+        // Include previous_close in the high/low range
+        if (candleOpen) prices.push(candleOpen);
+
+        if (prices.length > 0 && candleOpen) {
+          // If no snapshots yet, close = open (flat candle)
+          if (!closePrice) closePrice = candleOpen;
           candles.push({
             date: row.date,
-            open: openPrice,
+            open: candleOpen,
             close: closePrice,
             high: Math.max.apply(null, prices),
             low: Math.min.apply(null, prices)
