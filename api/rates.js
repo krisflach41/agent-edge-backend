@@ -57,10 +57,10 @@ module.exports = async (req, res) => {
           date: d.date,
           snapshots: d.snapshots || {},
           previous_close: d.previous_close || 0,
-          latest_price: d.latest_price || 0,
-          latest_bps: d.latest_bps || 0,
           manual_high: d.manual_high || null,
           manual_low: d.manual_low || null,
+          latest_price: d.latest_price || 0,
+          latest_bps: d.latest_bps || 0,
           updated_at: d.updated_at || new Date().toISOString()
         };
 
@@ -71,10 +71,8 @@ module.exports = async (req, res) => {
         var existing = await checkResp.json();
 
         if (existing && existing.length > 0) {
-          // Merge new snapshots with existing ones
-          var merged = existing[0].snapshots || {};
-          Object.keys(d.snapshots || {}).forEach(function(k) { merged[k] = d.snapshots[k]; });
-          row.snapshots = merged;
+          // Full overwrite — cleared fields in MC should clear in the database
+          row.snapshots = d.snapshots || {};
 
           await fetch(SUPABASE_URL + '/rest/v1/mbs_override?date=eq.' + d.date, {
             method: 'PATCH',
@@ -114,6 +112,80 @@ module.exports = async (req, res) => {
       return res.status(200).json({ success: true, override: null });
     } catch (err) {
       return res.status(200).json({ success: false, message: err.message });
+    }
+  }
+
+  // ===== MBS HISTORY: GET CANDLE DATA =====
+  if (queryAction === 'get_mbs_history') {
+    var SUPABASE_URL = process.env.SUPABASE_URL;
+    var SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
+    if (!SUPABASE_URL || !SUPABASE_KEY) return res.status(200).json({ success: false, data: [] });
+
+    try {
+      var resp = await fetch(SUPABASE_URL + '/rest/v1/mbs_override?order=date.asc&limit=500', {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+      });
+      var rows = await resp.json();
+      if (!rows || rows.length === 0) return res.status(200).json({ success: true, data: [] });
+
+      // Convert each day's snapshots into a candle
+      var candles = [];
+      rows.forEach(function(row) {
+        var snaps = row.snapshots || {};
+        var prices = [];
+        var closePrice = null;
+        var order = ['premarket', 'open', 'midday', 'afternoon', 'close'];
+        order.forEach(function(slot) {
+          if (snaps[slot] && snaps[slot].price) {
+            prices.push(snaps[slot].price);
+            closePrice = snaps[slot].price;
+          }
+        });
+
+        // "Current" always wins as the candle close if it has a value
+        if (snaps.current && snaps.current.price) {
+          prices.push(snaps.current.price);
+          closePrice = snaps.current.price;
+        }
+
+        // The candle open is always the previous close (after-hours final)
+        // This is the true anchor point for the day's movement
+        var candleOpen = row.previous_close || null;
+
+        // If no previous_close stored, fall back to the first snapshot
+        if (!candleOpen && prices.length > 0) {
+          candleOpen = prices[0];
+        }
+
+        // Include previous_close in the high/low range
+        if (candleOpen) prices.push(candleOpen);
+
+        if (prices.length > 0 && candleOpen) {
+          // If no snapshots yet, close = open (flat candle)
+          if (!closePrice) closePrice = candleOpen;
+
+          // Use manual high/low if provided (from MBS Highway actual data)
+          // Otherwise fall back to the high/low of our sampled entries
+          var candleHigh = row.manual_high || Math.max.apply(null, prices);
+          var candleLow = row.manual_low || Math.min.apply(null, prices);
+
+          // Ensure manual values don't conflict with actual data
+          if (row.manual_high && row.manual_high > candleHigh) candleHigh = row.manual_high;
+          if (row.manual_low && row.manual_low < candleLow) candleLow = row.manual_low;
+
+          candles.push({
+            date: row.date,
+            open: candleOpen,
+            close: closePrice,
+            high: candleHigh,
+            low: candleLow
+          });
+        }
+      });
+
+      return res.status(200).json({ success: true, data: candles });
+    } catch (err) {
+      return res.status(200).json({ success: false, data: [], message: err.message });
     }
   }
 
