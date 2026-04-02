@@ -134,7 +134,7 @@ module.exports = async (req, res) => {
         var snaps = row.snapshots || {};
         var prices = [];
         var closePrice = null;
-        var order = ['open', 'midday', 'afternoon', 'close'];
+        var order = ['premarket', 'open', 'midday', 'afternoon', 'close'];
         order.forEach(function(slot) {
           if (snaps[slot] && snaps[slot].price) {
             prices.push(snaps[slot].price);
