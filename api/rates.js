@@ -57,6 +57,8 @@ module.exports = async (req, res) => {
           date: d.date,
           snapshots: d.snapshots || {},
           previous_close: d.previous_close || 0,
+          manual_high: d.manual_high || null,
+          manual_low: d.manual_low || null,
           latest_price: d.latest_price || 0,
           latest_bps: d.latest_bps || 0,
           updated_at: d.updated_at || new Date().toISOString()
@@ -157,12 +159,22 @@ module.exports = async (req, res) => {
         if (prices.length > 0 && candleOpen) {
           // If no snapshots yet, close = open (flat candle)
           if (!closePrice) closePrice = candleOpen;
+
+          // Use manual high/low if provided (from MBS Highway actual data)
+          // Otherwise fall back to the high/low of our sampled entries
+          var candleHigh = row.manual_high || Math.max.apply(null, prices);
+          var candleLow = row.manual_low || Math.min.apply(null, prices);
+
+          // Ensure manual values don't conflict with actual data
+          if (row.manual_high && row.manual_high > candleHigh) candleHigh = row.manual_high;
+          if (row.manual_low && row.manual_low < candleLow) candleLow = row.manual_low;
+
           candles.push({
             date: row.date,
             open: candleOpen,
             close: closePrice,
-            high: Math.max.apply(null, prices),
-            low: Math.min.apply(null, prices)
+            high: candleHigh,
+            low: candleLow
           });
         }
       });
