@@ -144,6 +144,12 @@ module.exports = async (req, res) => {
           }
         });
 
+        // "Current" always wins as the candle close if it has a value
+        if (snaps.current && snaps.current.price) {
+          prices.push(snaps.current.price);
+          closePrice = snaps.current.price;
+        }
+
         // The candle open is always the previous close (after-hours final)
         // This is the true anchor point for the day's movement
         var candleOpen = row.previous_close || null;
