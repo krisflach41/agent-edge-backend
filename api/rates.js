@@ -71,10 +71,8 @@ module.exports = async (req, res) => {
         var existing = await checkResp.json();
 
         if (existing && existing.length > 0) {
-          // Merge new snapshots with existing ones
-          var merged = existing[0].snapshots || {};
-          Object.keys(d.snapshots || {}).forEach(function(k) { merged[k] = d.snapshots[k]; });
-          row.snapshots = merged;
+          // Full overwrite — cleared fields in MC should clear in the database
+          row.snapshots = d.snapshots || {};
 
           await fetch(SUPABASE_URL + '/rest/v1/mbs_override?date=eq.' + d.date, {
             method: 'PATCH',
