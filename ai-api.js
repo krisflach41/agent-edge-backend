@@ -132,20 +132,28 @@ PARTNER CONTENT RULES — CRITICAL:
 
       // ---- BLOG DRAFT ----
       case 'blog-draft': {
-        const { topic } = body;
+        const { topic, audience, tone, takeaway } = body;
         if (!topic) return res.status(400).json({ error: 'topic required' });
         maxTokens = 2000;
         responseFormat = 'json';
+        var audienceMap = { 'buyers':'home buyers', 'sellers':'home sellers', 'first-time':'first-time home buyers', 'realtors':'real estate agents', 'general':'general audience (buyers, sellers, and anyone interested in mortgage education)' };
+        var toneMap = { 'educational':'educational and informative', 'myth-busting':'myth-busting — challenge common misconceptions head-on', 'straight-talk':'straight talk — no sugarcoating, just the truth', 'encouraging':'encouraging and reassuring', 'funny':'light and funny while still teaching something real' };
+        var audienceLabel = audienceMap[audience] || audienceMap['general'];
+        var toneLabel = toneMap[tone] || toneMap['educational'];
+        var takeawayLine = takeaway ? '\nKEY TAKEAWAY the reader should walk away with: ' + takeaway : '';
         systemPrompt = `${KRISTY_PROFILE}
 
 You are writing a blog post for Kristy's website.
+
+AUDIENCE: ${audienceLabel}
+TONE: ${toneLabel}${takeawayLine}
 
 OUTPUT FORMAT — return ONLY valid JSON, no markdown, no backticks, no explanation:
 {"title":"...","category":"...","summary":"A 1-2 sentence summary for the blog card on the homepage","body":"The full blog post in HTML format (use <h3>, <p>, <ul>, <li>, <strong>, <em> tags). Aim for 600-900 words."}
 
 Category must be one of: Home Buying, Refinance, Mortgage Strategy, Market Update, Credit & Finance, First-Time Buyers
-Always end with a clear call to action.`;
-        userMessage = `Write a mortgage blog post about: ${topic}`;
+Always end with a clear call to action that fits the audience.`;
+        userMessage = `Here's the concept for this blog post:\n\n${topic}`;
         break;
       }
 
