@@ -1,4 +1,5 @@
 // /api/content-calendar.js — Content Calendar AI generator for Media Lab
+import { getRelevantKnowledge } from './knowledge-base.js';
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -152,6 +153,17 @@ PAST CLIENTS/SPHERE — Stay top of mind. Referral generation: "When your friend
 
       default:
         return res.status(400).json({ error: 'Unknown action: ' + action });
+    }
+
+    // Inject CMA knowledge base into content generation
+    try {
+      const searchText = body.topics || body.category || 'mortgage lending home buying refinance';
+      const kb = await getRelevantKnowledge(searchText, process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+      if (kb) {
+        systemPrompt = systemPrompt + '\n\n' + kb;
+      }
+    } catch (kbErr) {
+      console.error('Knowledge base injection failed:', kbErr.message);
     }
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {

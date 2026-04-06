@@ -1,3 +1,4 @@
+import { getRelevantKnowledge } from './knowledge-base.js';
 export default async function handler(req, res) {
   var origin = req.headers.origin || '';
   var allowedOrigins = ['https://kristyflach.com', 'https://kristyflach41.github.io'];
@@ -49,6 +50,16 @@ export default async function handler(req, res) {
       'Also provide a short subject line that sounds like something a real person would write, not a marketing email.\n\n' +
       'You MUST respond in this exact JSON format with no other text, no markdown, no backticks:\n' +
       '{"subject": "Your subject line here", "body_html": "<p>First paragraph</p><p>Second paragraph</p>"}';
+
+    // Inject CMA knowledge base
+    try {
+      var kb = await getRelevantKnowledge(prompt, process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+      if (kb) {
+        systemPrompt = systemPrompt + '\n\n' + kb;
+      }
+    } catch (kbErr) {
+      console.error('Knowledge base injection failed:', kbErr.message);
+    }
 
     var response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',

@@ -1,6 +1,9 @@
 // /api/ai-api.js — Central AI endpoint for Agent Edge
 // All AI features across the platform route through here.
 // Kristy's profile, voice, and credentials are defined once.
+// Knowledge base wired in for content generation actions.
+//
+import { getRelevantKnowledge } from './knowledge-base.js';
 //
 // POST { action, ...params }
 //
@@ -219,6 +222,23 @@ You are helping Kristy respond to a client or realtor scenario. Give a clear, co
 
       default:
         return res.status(400).json({ error: `Unknown action: ${action}` });
+    }
+
+    // ============================================================
+    // INJECT KNOWLEDGE BASE for content-generation actions
+    // ============================================================
+    const KB_ACTIONS = ['blog-draft', 'blog-polish', 'video-script', 'video-rewrite', 'social-caption', 'scenario-response', 'general'];
+    if (KB_ACTIONS.includes(action)) {
+      try {
+        const searchText = body.topic || body.prompt || body.draft || body.script || body.scenario || '';
+        const kb = await getRelevantKnowledge(searchText, process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+        if (kb) {
+          systemPrompt = systemPrompt + '\n\n' + kb;
+        }
+      } catch (kbErr) {
+        // Knowledge base fetch failed — continue without it
+        console.error('Knowledge base injection failed:', kbErr.message);
+      }
     }
 
     // ============================================================
