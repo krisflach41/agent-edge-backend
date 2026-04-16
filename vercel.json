@@ -90,23 +90,11 @@
     },
     {
       "path": "/api/cron-market-snapshots",
-      "schedule": "30 13 * * 1-5"
+      "schedule": "0 14 * * 1-5"
     },
     {
       "path": "/api/cron-market-snapshots",
-      "schedule": "30 14 * * 1-5"
-    },
-    {
-      "path": "/api/cron-market-snapshots",
-      "schedule": "0 15 * * 1-5"
-    },
-    {
-      "path": "/api/cron-market-snapshots",
-      "schedule": "30 15 * * 1-5"
-    },
-    {
-      "path": "/api/cron-market-snapshots",
-      "schedule": "0 20 * * 1-5"
+      "schedule": "30 21 * * 1-5"
     }
   ]
 }
