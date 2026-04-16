@@ -1,6 +1,8 @@
 // /api/cron-market-snapshots.js
-// Captures market price snapshots at 9am, 12pm, 2pm, 5pm ET
-// At 5pm (Close), also writes daily OHLC to umbs_daily_history for chart data
+// Captures UMBS 5.5% market data twice per trading day:
+//   - 10:00 AM ET: yesterday's close + today's open (for morning card display)
+//   - 5:30 PM ET: today's full OHLC (close, writes to daily history)
+// Also captures 10Y Treasury (FRED) and S&P 500 (Yahoo SPY).
 // Stores snapshots in Supabase table: market_snapshots
 // Stores daily OHLC in Supabase table: umbs_daily_history
 
@@ -78,14 +80,15 @@ module.exports = async (req, res) => {
     var hour = etTime.getHours();
     var min = etTime.getMinutes();
 
+    // Label = "Open" for the morning run, "Close" for the evening run.
+    // Any other times (manual triggers) get a timestamp label.
     var label = '';
-    if (hour === 9 && min <= 10) label = 'Open';
-    else if (hour === 12 && min <= 10) label = 'Mid-Day';
-    else if (hour === 14 && min <= 10) label = 'Afternoon';
-    else if ((hour === 16 && min >= 55) || (hour === 17 && min <= 5)) label = 'Close';
+    if (hour === 10 && min <= 15) label = 'Open';
+    else if (hour === 17 && min >= 25 && min <= 35) label = 'Close';
     else label = hour + ':' + (min < 10 ? '0' : '') + min + ' ET';
 
     var isClose = (label === 'Close');
+    var isOpen = (label === 'Open');
 
     var dateStr = etTime.getFullYear() + '-' +
       String(etTime.getMonth() + 1).padStart(2, '0') + '-' +
@@ -158,6 +161,7 @@ module.exports = async (req, res) => {
 
     return res.status(200).json({
       success: true, label: label, date: dateStr,
+      run: isOpen ? 'morning' : (isClose ? 'evening' : 'manual'),
       snapshotCount: snapshots.length,
       dailyOHLCCount: dailyOHLC.length,
       symbols: snapshots.map(function(s) { return s.symbol + ': ' + s.price; })
