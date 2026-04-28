@@ -215,12 +215,33 @@ ${rawContent}`;
       }
 
       var summaryText = summaryData.content.find(function(b) { return b.type === 'text'; })?.text || '';
-      summaryText = summaryText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+
+      // Aggressively clean before parsing
+      summaryText = summaryText
+        .replace(/```json\s*/gi, '')
+        .replace(/```\s*/g, '')
+        .replace(/[\u201C\u201D]/g, '"')
+        .replace(/[\u2018\u2019]/g, "'")
+        .trim();
+
+      // Extract just the JSON object if there is extra text around it
+      var jsonMatch = summaryText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) summaryText = jsonMatch[0];
 
       var summaryParsed;
       try {
         summaryParsed = JSON.parse(summaryText);
       } catch (e) {
+        // Last resort: extract values manually
+        var mktMatch = summaryText.match(/"marketSummary"\s*:\s*"([\s\S]*?)(?:",\s*"clientFriendly"|"\s*\})/);
+        var clientMatch = summaryText.match(/"clientFriendly"\s*:\s*"([\s\S]*?)(?:"\s*\}|"\s*$)/);
+        if (mktMatch && clientMatch) {
+          return res.status(200).json({
+            success: true,
+            marketSummary: mktMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"'),
+            clientFriendly: clientMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"')
+          });
+        }
         return res.status(200).json({
           success: false,
           error: 'Failed to parse summary response as JSON',
